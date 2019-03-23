@@ -1,0 +1,49 @@
+CC=gcc
+NVCC=nvcc
+DEBUG=-g -DDEBUG -pg -O0
+OPT = -Ofast -march=native
+CFLAGS=-c -std=c99 -Wall $(OPT) -I$(SACHOME)/include -fopenmp -pthread
+LFLAGS=-std=c99 -Wall $(OPT) -fopenmp -pthread
+CLIBS=-lm -lfftw3 -lfftw3f -lstdc++
+
+CUFLAGS=-c -lineinfo --use_fast_math -gencode arch=compute_30,code=sm_30 -gencode arch=compute_35,code=sm_35 -gencode arch=compute_61,code=sm_61
+CULIBS=-L/usr/local/cuda/lib64 -lcuda -lcudart
+
+libsac = $(SACHOME)/lib/sacio.a
+
+all: Filelist2msacs PCC_fullpair_1a
+
+PCC_fullpair_1a_cuda: PCC_fullpair_1a.o FFTapps_cuda.o ccs_cuda.o ReadManySacs.o sph.o
+	$(CC) $(LFLAGS) -o PCC_fullpair_1a_cuda PCC_fullpair_1a.o FFTapps_cuda.o ReadManySacs.o sph.o ccs_cuda.o $(libsac) $(CLIBS) $(CULIBS)
+
+PCC_fullpair_1a: PCC_fullpair_1a.o FFTapps.o ReadManySacs.o sph.o
+	$(CC) $(LFLAGS) -o PCC_fullpair_1a PCC_fullpair_1a.o FFTapps.o ReadManySacs.o sph.o $(libsac) $(CLIBS)
+
+PCC_fullpair_1a.o: PCC_fullpair_1a.c 
+	$(CC) $(CFLAGS) PCC_fullpair_1a.c
+
+FFTapps.o: FFTapps.c FFTapps.h
+	$(CC) $(CFLAGS) FFTapps.c
+
+FFTapps_cuda.o: FFTapps.c FFTapps.h
+	$(CC) $(CFLAGS) -DCUDAON -o FFTapps_cuda.o FFTapps.c
+	
+Filelist2msacs: Filelist2msacs.o ReadManySacs.o
+	$(CC) $(LFLAGS) -o Filelist2msacs Filelist2msacs.o ReadManySacs.o $(libsac) $(CLIBS)
+	
+ReadManySacs.o: ReadManySacs.c ReadManySacs.h
+	$(CC) $(CFLAGS) ReadManySacs.c
+
+sph.o: sph.c sph.h
+	$(CC) $(CFLAGS) sph.c
+	
+ccs_cuda.o: ccs_cuda.cu ccs_cuda.h
+	$(NVCC) $(CUFLAGS) ccs_cuda.cu
+	
+install: Filelist2msacs PCC_fullpair_1a
+	mkdir -p ../bin
+	install -s Filelist2msacs PCC_fullpair_1a ../bin
+
+clean:
+	rm -rf *o PCC_fullpair_1a PCC_fullpair_1a_cuda Filelist2msacs
+
