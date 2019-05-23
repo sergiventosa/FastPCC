@@ -2,6 +2,7 @@
 #include <fftw3.h>
 #include <stdio.h>
 #include <math.h>
+#include <fcntl.h>
 #include <semaphore.h>
 #include <cuda_runtime.h>
 #include "ccs_cuda.h"
@@ -119,18 +120,23 @@ __global__ void PCC1_lowlevel2 (const float2 *x1, const float2 *x2, float *y, in
 
 // Host code
 #if 0
-void pcc1_highlevel (double ** const y, _Complex float ** const x1, _Complex float ** const x2, const int N, const int Tr, const int Lag1, const int Lag2, sem_t *anok) {
+void pcc1_highlevel (double ** const y, _Complex float ** const x1, _Complex float ** const x2, const int N, const int Tr, const int Lag1, const int Lag2, const unsigned int *trid) {
 	float *h_y;
 	float2 *d_xan1, *d_xan2;
 	float *d_y;
 	int L=Lag2-Lag1+1;
 	size_t szx, szy;
-	unsigned int tr, l, l1;
+	unsigned int tr, id, l, l1;
 	int threadsPerBlock = BLOCK_SIZE, blocksPerGrid;
+	sem_t *anok;
 	
 	if (Lag2 > N) L -= (Lag2-N);
 	l1 = (Lag1 >= -N) ? 0 : -(Lag1+N);
 
+	if (SEM_FAILED == (anok = sem_open("/analytic", O_CREAT, 0600, 0) )) {
+		printf("pcc1_highlevel: sem_open fail\n");
+		return;
+	}
 	/* Convert data to float */
 	szx = N*sizeof(float2);
 	szy = L*sizeof(float);
@@ -141,28 +147,32 @@ void pcc1_highlevel (double ** const y, _Complex float ** const x1, _Complex flo
 	cudaMalloc(&d_xan2, szx);
 	cudaMalloc(&d_y,    szy);
 	
-	for (tr=0; tr<Tr; tr++) {
-		sem_wait(&anok[tr]);
-		
-		cudaMemcpy(d_xan1, (float *)x1[tr], szx, cudaMemcpyHostToDevice);
-		cudaMemcpy(d_xan2, (float *)x2[tr], szx, cudaMemcpyHostToDevice);
-		
-		// Invoke the kernel GPU_AmpNormf
-		blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
-		GPU_AmpNormf<<<blocksPerGrid, threadsPerBlock>>>(d_xan1, N);
-		GPU_AmpNormf<<<blocksPerGrid, threadsPerBlock>>>(d_xan2, N);
-		
-		// Invoke the kernel PCC1_lowlevel
-		blocksPerGrid = (L-l1 + threadsPerBlock - 1) / threadsPerBlock;
-		PCC1_lowlevel2<<<blocksPerGrid, threadsPerBlock>>>(d_xan1, d_xan2, d_y, N, L, l1, Lag1);
-		
-		/* Copy result back */
-		cudaMemcpy(h_y, d_y, szy, cudaMemcpyDeviceToHost);
-		
-		/* Convert results to double */
-		for (l=l1; l<L; l++) y[tr][l] = h_y[l];
+	anok = sem_open("/analytic", O_CREAT, 0600, 0);
+	if (anok != SEM_FAILED) {
+		for (tr=0; tr<Tr; tr++) {
+			sem_wait(anok);
+			id = trid[tr];
+			
+			cudaMemcpy(d_xan1, (float *)x1[id], szx, cudaMemcpyHostToDevice);
+			cudaMemcpy(d_xan2, (float *)x2[id], szx, cudaMemcpyHostToDevice);
+			
+			// Invoke the kernel GPU_AmpNormf
+			blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
+			GPU_AmpNormf<<<blocksPerGrid, threadsPerBlock>>>(d_xan1, N);
+			GPU_AmpNormf<<<blocksPerGrid, threadsPerBlock>>>(d_xan2, N);
+			
+			// Invoke the kernel PCC1_lowlevel
+			blocksPerGrid = (L-l1 + threadsPerBlock - 1) / threadsPerBlock;
+			PCC1_lowlevel2<<<blocksPerGrid, threadsPerBlock>>>(d_xan1, d_xan2, d_y, N, L, l1, Lag1);
+			
+			/* Copy result back */
+			cudaMemcpy(h_y, d_y, szy, cudaMemcpyDeviceToHost);
+			
+			/* Convert results to double */
+			for (l=l1; l<L; l++) y[id][l] = h_y[l];
+		}
+		sem_close(anok);
 	}
-	
 	cudaFree(d_xan1);
 	cudaFree(d_xan2);
 	cudaFree(d_y);
@@ -170,15 +180,16 @@ void pcc1_highlevel (double ** const y, _Complex float ** const x1, _Complex flo
 }
 #else
 
-void pcc1_highlevel (double **y, _Complex float **x1, _Complex float **x2, int N, int Tr, int Lag1, int Lag2, sem_t *anok) {
+void pcc1_highlevel (double **y, _Complex float **x1, _Complex float **x2, int N, int Tr, int Lag1, int Lag2, const unsigned int *trid) {
 	float *h_y;
 	float2 *d_xan1, *d_xan2;
 	float *d_y;
 	int L=Lag2-Lag1+1;
 	size_t szx, szy;
-	unsigned int tr, l, l1, n, m;
+	unsigned int tr, id, l, l1, n, m;
 	int threadsPerBlock = BLOCK_SIZE, blocksPerGrid1, blocksPerGrid2;
 	cudaStream_t stream[16];
+	sem_t *anok;
 	
 	if (Lag2 > N) L -= (Lag2-N);
 	l1 = (Lag1 >= -N) ? 0 : -(Lag1+N);
@@ -196,26 +207,31 @@ void pcc1_highlevel (double **y, _Complex float **x1, _Complex float **x2, int N
 	blocksPerGrid1 = (N + threadsPerBlock - 1) / threadsPerBlock;
 	blocksPerGrid2 = (L-l1 + threadsPerBlock - 1) / threadsPerBlock;
 	for (m=0; m<16; m++) cudaStreamCreate(&stream[m]);
-	for (n=0; n<(Tr+15)/16; n++) {
-		for (m=0; m<16; m++) {
-			tr = 16*n+m;
-			if (tr < Tr) {
-				sem_wait(&anok[tr]);
-				
-				cudaMemcpy(d_xan1 + m*N, (float *)x1[tr], szx, cudaMemcpyHostToDevice);
-				cudaMemcpy(d_xan2 + m*N, (float *)x2[tr], szx, cudaMemcpyHostToDevice);
-				
-				// Invoke the kernel GPU_AmpNormf
-				GPU_AmpNormf<<<blocksPerGrid1, threadsPerBlock, 0, stream[m]>>>(d_xan1 + m*N, N);
-				GPU_AmpNormf<<<blocksPerGrid1, threadsPerBlock, 0, stream[m]>>>(d_xan2 + m*N, N);
-				
-				// Invoke the kernel PCC1_lowlevel
-				PCC1_lowlevel2<<<blocksPerGrid2, threadsPerBlock, 0, stream[m]>>>(d_xan1 + m*N, d_xan2 + m*N, d_y + m*L, N, L, l1, Lag1);
-				
-				/* Copy result back */
-				cudaMemcpyAsync(h_y + tr*L, d_y + m*L, szy, cudaMemcpyDeviceToHost, stream[m]);
+	anok = sem_open("/analytic", O_CREAT, 0600, 0);
+	if (anok != SEM_FAILED) {
+		for (n=0; n<(Tr+15)/16; n++) {
+			for (m=0; m<16; m++) {
+				tr = 16*n+m;
+				if (tr < Tr) {
+					sem_wait(anok);
+					id = trid[tr];
+					
+					cudaMemcpy(d_xan1 + m*N, (float *)x1[id], szx, cudaMemcpyHostToDevice);
+					cudaMemcpy(d_xan2 + m*N, (float *)x2[id], szx, cudaMemcpyHostToDevice);
+					
+					// Invoke the kernel GPU_AmpNormf
+					GPU_AmpNormf<<<blocksPerGrid1, threadsPerBlock, 0, stream[m]>>>(d_xan1 + m*N, N);
+					GPU_AmpNormf<<<blocksPerGrid1, threadsPerBlock, 0, stream[m]>>>(d_xan2 + m*N, N);
+					
+					// Invoke the kernel PCC1_lowlevel
+					PCC1_lowlevel2<<<blocksPerGrid2, threadsPerBlock, 0, stream[m]>>>(d_xan1 + m*N, d_xan2 + m*N, d_y + m*L, N, L, l1, Lag1);
+					
+					/* Copy result back */
+					cudaMemcpyAsync(h_y + id*L, d_y + m*L, szy, cudaMemcpyDeviceToHost, stream[m]);
+				}
 			}
 		}
+		sem_close(anok);
 	}
 	cudaDeviceSynchronize();
 	

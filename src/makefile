@@ -11,16 +11,16 @@ CULIBS=-L/usr/local/cuda/lib64 -lcuda -lcudart
 
 libsac = $(SACHOME)/lib/sacio.a
 
-all: Filelist2msacs PCC_fullpair_1a
+all: Filelist2msacs PCC_fullpair_1b
 
-PCC_fullpair_1a_cuda: PCC_fullpair_1a.o FFTapps_cuda.o ccs_cuda.o ReadManySacs.o sph.o
-	$(CC) $(LFLAGS) -o PCC_fullpair_1a_cuda PCC_fullpair_1a.o FFTapps_cuda.o ReadManySacs.o sph.o ccs_cuda.o $(libsac) $(CLIBS) $(CULIBS)
+PCC_fullpair_1b_cuda: PCC_fullpair_1b.o FFTapps_cuda.o ccs_cuda.o ReadManySacs.o sph.o
+	$(CC) $(LFLAGS) -o PCC_fullpair_1b_cuda PCC_fullpair_1b.o FFTapps_cuda.o ReadManySacs.o sph.o ccs_cuda.o $(libsac) $(CLIBS) $(CULIBS)
 
-PCC_fullpair_1a: PCC_fullpair_1a.o FFTapps.o ReadManySacs.o sph.o
-	$(CC) $(LFLAGS) -o PCC_fullpair_1a PCC_fullpair_1a.o FFTapps.o ReadManySacs.o sph.o $(libsac) $(CLIBS)
+PCC_fullpair_1b: PCC_fullpair_1b.o FFTapps.o ReadManySacs.o sph.o
+	$(CC) $(LFLAGS) -o PCC_fullpair_1b PCC_fullpair_1b.o FFTapps.o ReadManySacs.o sph.o $(libsac) $(CLIBS)
 
-PCC_fullpair_1a.o: PCC_fullpair_1a.c 
-	$(CC) $(CFLAGS) PCC_fullpair_1a.c
+PCC_fullpair_1b.o: PCC_fullpair_1b.c 
+	$(CC) $(CFLAGS) PCC_fullpair_1b.c
 
 FFTapps.o: FFTapps.c FFTapps.h
 	$(CC) $(CFLAGS) FFTapps.c
@@ -40,10 +40,11 @@ sph.o: sph.c sph.h
 ccs_cuda.o: ccs_cuda.cu ccs_cuda.h
 	$(NVCC) $(CUFLAGS) ccs_cuda.cu
 	
-install: Filelist2msacs PCC_fullpair_1a
+install: Filelist2msacs PCC_fullpair_1b
 	mkdir -p ../bin
-	install -s Filelist2msacs PCC_fullpair_1a ../bin
-
+	install -s Filelist2msacs PCC_fullpair_1b ../bin
+	if [ -f PCC_fullpair_1b_cuda ]; then install -s PCC_fullpair_1b_cuda ../bin; fi
+	
 clean:
-	rm -rf *o PCC_fullpair_1a PCC_fullpair_1a_cuda Filelist2msacs
+	rm -rf *o PCC_fullpair_1b PCC_fullpair_1b_cuda Filelist2msacs
 

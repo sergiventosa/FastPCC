@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
 #include <semaphore.h>
 
 //#define CUDAON
@@ -15,8 +16,6 @@
 #ifndef PI
 #define PI 3.14159265358979323846
 #endif
-
-// #define FFTW_THREADS
 
 int AnalyticSignal (double complex *y, double *x, unsigned int N) {
 	fftw_plan pin, pout;
@@ -451,12 +450,8 @@ int pcc1_set (double ** const y, double ** const x1, double ** const x2, const i
 	
 	/* Memory allocation */
 	#if 1
-		sem_t *anok;
 		unsigned int tr;
 		float complex **fxa1, **fxa2;
-		
-		anok = (sem_t *)malloc(Tr*sizeof(sem_t));
-		for (tr=0; tr<Tr; tr++) sem_init(&anok[tr], 0, 0);
 		
 		fxa1 = (float complex **)fftw_malloc(Tr*sizeof(float complex *));
 		fxa1[0] = (float complex *)fftw_malloc(Tr*N*sizeof(float complex));
@@ -466,93 +461,107 @@ int pcc1_set (double ** const y, double ** const x1, double ** const x2, const i
 		fxa2[0] = (float complex *)fftw_malloc(Tr*N*sizeof(float complex));
 		for (tr=1; tr<Tr; tr++) fxa2[tr] = fxa2[tr-1] + N;
 		#ifdef CUDAON
-			#pragma omp parallel sections
-			{
-				#pragma omp section
+			sem_t *anok;
+			unsigned int *trid;
+			
+			if (SEM_FAILED == (anok = sem_open("/analytic", O_CREAT, 0600, 0) )) nerr = -3;
+			if (NULL == (trid = (unsigned int *)malloc(Tr*sizeof(unsigned int)) )) nerr = -2;
+			if (nerr == 0) {
+				#pragma omp parallel sections
 				{
-					#pragma omp parallel 
+					#pragma omp section
 					{
-						fftwf_plan pain, paout;
-						float *x;
-						float complex *xa;
-						unsigned int n, step;
+						int ntr = 0;
 						
-						#pragma omp critical
+						#pragma omp parallel 
 						{
-							x = (float *)fftw_malloc(N*sizeof(float));
-							xa = (float complex *)fftw_malloc(N*sizeof(float complex));
+							fftwf_plan pain, paout;
+							float *x;
+							float complex *xa;
+							unsigned int n, step, id;
 							
-							pain = fftwf_plan_dft_r2c_1d(N, x, xa, FFTW_ESTIMATE);
-							paout = fftwf_plan_dft_1d(N, xa, xa, FFTW_BACKWARD, FFTW_ESTIMATE);
+							#pragma omp critical
+							{
+								x = (float *)fftw_malloc(N*sizeof(float));
+								xa = (float complex *)fftw_malloc(N*sizeof(float complex));
+								
+								pain = fftwf_plan_dft_r2c_1d(N, x, xa, FFTW_ESTIMATE);
+								paout = fftwf_plan_dft_1d(N, xa, xa, FFTW_BACKWARD, FFTW_ESTIMATE);
+							}
+							
+							step = omp_get_num_threads();
+							for (tr=omp_get_thread_num(); tr<Tr; tr+=step) {  /* First traces are processed first. */
+								for (n=0; n<N; n++) x[n] = (float)x1[tr][n];
+								AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
+								memcpy(fxa1[tr], xa, N*sizeof(float complex));
+								
+								for (n=0; n<N; n++) x[n] = (float)x2[tr][n];
+								AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
+								memcpy(fxa2[tr], xa, N*sizeof(float complex));
+								
+								#pragma omp atomic capture  /* OpenMP 3.1 */
+								id = ntr++;
+								
+								trid[id] = tr;
+								sem_post(anok);
+							}
+							
+							#pragma omp critical
+							{
+								fftw_free(x);
+								fftw_free(xa);
+								
+								fftwf_destroy_plan(pain);
+								fftwf_destroy_plan(paout);
+							}
 						}
-						
-						step = omp_get_num_threads();
-						for (tr=omp_get_thread_num(); tr<Tr; tr+=step) {  /* First traces are processed first. */
-							for (n=0; n<N; n++) x[n] = (float)x1[tr][n];
-							AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
-							memcpy(fxa1[tr], xa, N*sizeof(float complex));
-							
-							for (n=0; n<N; n++) x[n] = (float)x2[tr][n];
-							AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
-							memcpy(fxa2[tr], xa, N*sizeof(float complex));
-							
-							sem_post(&anok[tr]);
-						}
-						
-						#pragma omp critical
-						{
-							fftw_free(x);
-							fftw_free(xa);
-							
-							fftwf_destroy_plan(pain);
-							fftwf_destroy_plan(paout);
-						}
+						sem_close(anok);
 					}
-				}
-				#pragma omp section
-				{
-					pcc1_highlevel (y, fxa1, fxa2, N, Tr, Lag1, Lag2, anok);
+					#pragma omp section
+					{
+						pcc1_highlevel (y, fxa1, fxa2, N, Tr, Lag1, Lag2, trid);
+					}
 				}
 			}
-			for (tr=0; tr<Tr; tr++) sem_destroy(&anok[tr]);
-			free(anok);
+			sem_unlink("/analytic");
+			free(trid);
 		#else
 			#pragma omp parallel 
+			{
+				fftwf_plan pain, paout;
+				float *x;
+				float complex *xa;
+				unsigned int n;
+				
+				#pragma omp critical
 				{
-					fftwf_plan pain, paout;
-					float *x;
-					float complex *xa;
-					unsigned int n;
+					x = (float *)fftw_malloc(N*sizeof(float));
+					xa = (float complex *)fftw_malloc(N*sizeof(float complex));
 					
-					#pragma omp critical
-					{
-						x = (float *)fftw_malloc(N*sizeof(float));
-						xa = (float complex *)fftw_malloc(N*sizeof(float complex));
-						
-						pain = fftwf_plan_dft_r2c_1d(N, x, xa, FFTW_ESTIMATE);
-						paout = fftwf_plan_dft_1d(N, xa, xa, FFTW_BACKWARD, FFTW_ESTIMATE);
-					}
-					
-					#pragma omp for schedule(static)
-					for (tr=0; tr<Tr; tr++) {
-						for (n=0; n<N; n++) x[n] = (float)x1[tr][n];
-						AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
-						memcpy(fxa1[tr], xa, N*sizeof(float complex));
-						
-						for (n=0; n<N; n++) x[n] = (float)x2[tr][n];
-						AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
-						memcpy(fxa2[tr], xa, N*sizeof(float complex));
-					}
-					
-					#pragma omp critical
-					{
-						fftw_free(x);
-						fftw_free(xa);
-						
-						fftwf_destroy_plan(pain);
-						fftwf_destroy_plan(paout);
-					}
+					pain = fftwf_plan_dft_r2c_1d(N, x, xa, FFTW_ESTIMATE);
+					paout = fftwf_plan_dft_1d(N, xa, xa, FFTW_BACKWARD, FFTW_ESTIMATE);
 				}
+				
+				#pragma omp for schedule(static)
+				for (tr=0; tr<Tr; tr++) {
+					for (n=0; n<N; n++) x[n] = (float)x1[tr][n];
+					AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
+					memcpy(fxa1[tr], xa, N*sizeof(float complex));
+					
+					for (n=0; n<N; n++) x[n] = (float)x2[tr][n];
+					AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
+					memcpy(fxa2[tr], xa, N*sizeof(float complex));
+				}
+				
+				#pragma omp critical
+				{
+					fftw_free(x);
+					fftw_free(xa);
+					
+					fftwf_destroy_plan(pain);
+					fftwf_destroy_plan(paout);
+				}
+			}
 			#pragma omp parallel for schedule(static)
 			for (tr=0; tr<Tr; tr++) {
 				AmpNormf(fxa1[tr], N);
@@ -571,32 +580,28 @@ int pcc1_set (double ** const y, double ** const x1, double ** const x2, const i
 		fftw_free(fxa2[0]);
 		fftw_free(fxa2);
 	#else
-		#ifdef CUDAON
-			pcc1_highlevel2 (y, x1, x2, N, Tr, Lag1, Lag2);
-		#else
-			unsigned int tr;
-			double complex *x1an = (double complex *)malloc(N*sizeof(double complex));
-			double complex *x2an = (double complex *)malloc(N*sizeof(double complex));
-			if (x1an == NULL || x2an == NULL) 
-				nerr = -2; 
-			else {
-				for (tr=0; tr<Tr; tr++) {
-					AnalyticSignal(x1an, x1[tr], N);
-					AnalyticSignal(x2an, x2[tr], N);
-					AmpNorm(x1an, N);
-					AmpNorm(x2an, N);
-					
-					/* Zero outputs. */
-					memset(y[tr], 0, L*sizeof(double));
+		unsigned int tr;
+		double complex *x1an = (double complex *)malloc(N*sizeof(double complex));
+		double complex *x2an = (double complex *)malloc(N*sizeof(double complex));
+		if (x1an == NULL || x2an == NULL) 
+			nerr = -2; 
+		else {
+			for (tr=0; tr<Tr; tr++) {
+				AnalyticSignal(x1an, x1[tr], N);
+				AnalyticSignal(x2an, x2[tr], N);
+				AmpNorm(x1an, N);
+				AmpNorm(x2an, N);
 				
-					/* The actual PCC computation */
-					pcc1_lowlevel (y[tr], x1an, x2an, N, Lag1, Lag2);
-				}
+				/* Zero outputs. */
+				memset(y[tr], 0, L*sizeof(double));
+			
+				/* The actual PCC computation */
+				pcc1_lowlevel (y[tr], x1an, x2an, N, Lag1, Lag2);
 			}
-			/* Cleaning */
-			free(x1an);
-			free(x2an);
-		#endif
+		}
+		/* Cleaning */
+		free(x1an);
+		free(x2an);
 	#endif
 	
 	return nerr;
