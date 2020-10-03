@@ -1,3 +1,14 @@
+/*****************************************************************************/
+/* Set of function dealing with a list of SAC files.                         */
+/*                                                                           */
+/* Authors: Sergi Ventosa Rahuet (sergiventosa@hotmail.com)                  */
+/*****************************************************************************/
+/* **** 2020 ****                                                            */
+/* Jun25 (1b) Relax criteria to accept SAC files in ReadManySacs()           */
+/*  - Sequences having more than N samples are now considered, but cut at    */
+/*    sample N.                                                              */
+/*****************************************************************************/
+
 #include <complex.h>  /* When done before fftw3.h, makes fftw3.h use C99 complex types. */
 #include <fftw3.h>
 #include <stdio.h>
@@ -76,7 +87,7 @@ int nerr_print (char *filename, int nerr) {
 	return 2;
 }
 
-double **Destroy_DoubleArrayList (double **x, unsigned int Tr) {
+float **Destroy_FloatArrayList (float **x, unsigned int Tr) {
 	unsigned int tr;
 	
 	for (tr=0; tr<Tr; tr++) fftw_free(x[tr]);
@@ -85,14 +96,14 @@ double **Destroy_DoubleArrayList (double **x, unsigned int Tr) {
 	return NULL;
 }
 
-double **Create_DoubleArrayList (unsigned int N, unsigned int Tr) {
+float **Create_FloatArrayList (unsigned int N, unsigned int Tr) {
 	unsigned int tr;
-	double **x = NULL;
+	float **x = NULL;
 	
-	if (NULL == (x = (double **)calloc(Tr, sizeof(double *)) )) return NULL;
+	if (NULL == (x = (float **)calloc(Tr, sizeof(float *)) )) return NULL;
 	for (tr=0; tr<Tr; tr++)
-		if (NULL == (x[tr] = (double *)fftw_malloc(N * sizeof(double)) ))
-			return Destroy_DoubleArrayList(x, Tr);
+		if (NULL == (x[tr] = (float *)fftw_malloc(N * sizeof(float)) ))
+			return Destroy_FloatArrayList(x, Tr);
 	return x;
 }
 
@@ -130,12 +141,11 @@ int ReadLocation (double *lat, double *lon, char *fin) {
 	return nerr;
 }
 
-int ReadManySacs (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin) {
+int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin) {
 	t_HeaderInfo *SacHeader=NULL, *phdr1;
-	double **x = NULL, *px;
-	float *sig=NULL;
+	float **x = NULL, *sig=NULL;
 	float beg, beg1, dt, dt1;
-	unsigned int tr, Tr, n, N, nskip, npts;
+	unsigned int tr, Tr, N, nskip, npts;
 	int nerr, Nmax, ia1;
 	char **filenames = NULL, *filename=NULL, *pch;
 	/* time_t t1; */
@@ -167,33 +177,16 @@ int ReadManySacs (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *T
 	filename = filenames[0];
 	rsach (filename, &nerr,  strlen(filename));       if (nerr) return nerr_print (filename, nerr);
 	getnhv ("npts",  &Nmax,   &nerr, strlen("npts")); if (nerr) return nerr_print (filename, nerr);
-	N = (unsigned)Nmax;
+	N = (*NOut == 0) ? (unsigned)Nmax : *NOut;
 	getfhv ("delta", &dt1,   &nerr, strlen("delta")); if (nerr) return nerr_print (filename, nerr);
 	getfhv ("b",     &beg1,  &nerr, strlen("b"));     if (nerr) return nerr_print (filename, nerr);
 	
-	phdr1 = SacHeader;
-	getnhv ("nzyear", &phdr1->year, &nerr, strlen("nzyear"));
-	getnhv ("nzjday", &phdr1->yday, &nerr, strlen("nzjday"));
-	getnhv ("nzhour", &phdr1->hour, &nerr, strlen("nzhour"));
-	getnhv ("nzmin",  &phdr1->min,  &nerr, strlen("nzmin"));
-	getnhv ("nzsec",  &phdr1->sec,  &nerr, strlen("nzsec"));
-	
-	tm.tm_year  = phdr1->year-1900;
-	tm.tm_mon   = 0;
-	tm.tm_mday  = phdr1->yday;
-	tm.tm_hour  = phdr1->hour;
-	tm.tm_min   = phdr1->min;
-	tm.tm_sec   = phdr1->sec;
-	tm.tm_isdst = 0;
-	/* t1 = utc_mktime(&tm); */
-	/* t1 = my_timegm(&tm); */
-	
 	/* Allocate memory for the input traces */
-	if (NULL == (x = Create_DoubleArrayList (N, Tr) )) nerr = 4;
+	if (NULL == (x = Create_FloatArrayList (N, Tr) )) nerr = 4;
 	if (NULL == (sig = (float *)calloc(N, sizeof(float)) )) nerr = 4;
 	if (nerr == 4) {
 		DestroyFilelist(filenames);
-		Destroy_DoubleArrayList(x, Tr);
+		Destroy_FloatArrayList(x, Tr);
 		free(sig);
 		free(SacHeader);
 		return nerr_OutOfMem_print (filename, N);
@@ -229,12 +222,12 @@ int ReadManySacs (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *T
 		getfhv ("stel",   &phdr1->stel, &nerr, strlen("stel")); if (nerr) { phdr1->stel = 0; nerr = 0; }
 		getfhv ("stdp",   &phdr1->stdp, &nerr, strlen("stdp")); if (nerr) { phdr1->stdp = 0; nerr = 0; }
 		getfhv ("cmpaz",  &phdr1->cmpaz,  &nerr, strlen("cmpaz"));  if (nerr) { phdr1->nocmp = 1; nerr = 0; }
-		getfhv ("cmpinc", &phdr1->cmpinc, &nerr, strlen("cmpinc")); if (nerr) { phdr1->nocmp = 0; nerr = 0; }
+		getfhv ("cmpinc", &phdr1->cmpinc, &nerr, strlen("cmpinc")); if (nerr) { phdr1->nocmp = 1; nerr = 0; }
 		if ( (pch = memchr(phdr1->net, ' ', 8)) ) pch[0] = '\0';
 		if ( (pch = memchr(phdr1->sta, ' ', 8)) ) pch[0] = '\0';
 		if ( (pch = memchr(phdr1->chn, ' ', 8)) ) pch[0] = '\0';
 		if ( (pch = memchr(phdr1->loc, ' ', 8)) ) pch[0] = '\0';
-		if ( !strncmp(phdr1->loc,"-123", 4) ) phdr1->loc[0] = '\0';
+		if ( !strncmp(phdr1->loc, SAC_CHAR_UNDEFINED, 6) ) phdr1->loc[0] = '\0';
 		
 		tm.tm_year  = phdr1->year-1900;
 		tm.tm_mon   = 0;
@@ -247,42 +240,41 @@ int ReadManySacs (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *T
 		phdr1->t    = my_timegm(&tm);
 		
 		if (nerr) {
-			printf("ReadManySacs: Error reading %s file (rsac1, nerr=%d)\n", filename, nerr);
+			printf ("ReadManySacs: ERROR reading the %s file (rsac1, nerr=%d)\n", filename, nerr);
 			return -2;
 		}
-		/*
-		if (t1 != phdr1->t) {
-			printf ("ReadManySacs: The %s and %s files have different dates.\n", filenames[0], filename);
+
+		if (npts < N) {
+			printf ("ReadManySacs: Files having too short sequences are not supported yet (%d:%d, %s)\n", N, npts, filename);
+			printf ("ReadManySacs: Skipping trace %u\n", tr);
 			nskip += 1;
 			continue;
+		} else if (npts > N) {
+			printf ("ReadManySacs: WARNING: Files having too long sequences are cut (%d:%d, %s)\n", N, npts, filename);
+			phdr1->npts = N;
 		}
-		*/
-		if (npts != N) {
-			printf ("ReadManySacs: Files having different lengths are not supported yet (%d:%d, %s)\n", N, npts, filename);
-			nskip += 1;
-			continue;
-		}
+		
 		if (fabs(dt-dt1) > dt1*0.001) {
 			printf ("ReadManySacs: Different sampling rate!!! (%f:%f, %s)\n", dt1, dt, filename);
+			printf ("ReadManySacs: Skipping trace %u\n", tr);
 			nskip += 1;
 			continue;
 		}
 		if (fabs(beg1-beg) > dt1) {
-			printf("ReadManySacs: WARNING: trace %u has a different beg !\n", tr);
-			printf("ReadManySacs: WARNING: skipping trace %u\n", tr);
+			printf ("ReadManySacs: Different beginning time!!! (%f:%f, %s)\n", beg1, beg, filename);
+			printf ("ReadManySacs: Skipping trace %u\n", tr);
 			nskip += 1;
 			continue;
 		}
 		
 		/* Copy the data */
-		px = x[tr-nskip];
-		for (n=0; n<N; n++) px[n] = (double)sig[n];
+		memcpy(x[tr-nskip], sig, N*sizeof(float));
 	}
 	Tr -= nskip;
 	
 	/* Clean up */
 	for (tr=Tr; tr<Tr+nskip; tr++) {
-		fftw_free(x[tr]); 
+		fftw_free(x[tr]);
 		x[tr] = NULL;
 	}
 	free(sig);
@@ -297,12 +289,11 @@ int ReadManySacs (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *T
 	return 0;
 }
 
-int ReadManySacs_WithDiffLength (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, char *fin) {
+int ReadManySacs_WithDiffLength (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, char *fin) {
 	t_HeaderInfo *SacHeader=NULL, *phdr1;
-	double **x = NULL, *px;
-	float *sig=NULL;
+	float **x = NULL, *sig=NULL;
 	float beg, dt;
-	unsigned int tr, Tr, n, nskip;
+	unsigned int tr, Tr, nskip;
 	int nerr, Nmax, npts;
 	char **filenames = NULL, *filename=NULL, *pch;
 	struct tm tm;
@@ -330,7 +321,7 @@ int ReadManySacs_WithDiffLength (double **xOut[], t_HeaderInfo *SacHeaderOut[], 
 	}
 	
 	/* Allocate memory for the input traces */
-	if (NULL == (x = (double **)calloc(Tr, sizeof(double *)) )) {
+	if (NULL == (x = (float **)calloc(Tr, sizeof(float *)) )) {
 		DestroyFilelist(filenames);
 		free(SacHeader);
 		printf ("ReadManySacs: Out of memory when reading files.\n"); 
@@ -347,11 +338,11 @@ int ReadManySacs_WithDiffLength (double **xOut[], t_HeaderInfo *SacHeaderOut[], 
 		rsach (filename, &nerr,  strlen(filename));       if (nerr) return nerr_print (filename, nerr);
 		getnhv ("npts",  &Nmax,   &nerr, strlen("npts")); if (nerr) return nerr_print (filename, nerr);
 		
-		if (NULL == (x[tr-nskip] = (double *)fftw_malloc(Nmax*sizeof(double)) )) nerr = 4;
+		if (NULL == (x[tr-nskip] = (float *)fftw_malloc(Nmax*sizeof(float)) )) nerr = 4;
 		if (NULL == (sig   = (float *)realloc(sig, Nmax*sizeof(float)) ))   nerr = 4;
 		if (nerr == 4) {
 			DestroyFilelist(filenames);
-			Destroy_DoubleArrayList(x, Tr);
+			Destroy_FloatArrayList(x, Tr);
 			free(sig);
 			free(SacHeader);
 			printf ("ReadManySacs: Out of memory when reading %s (npts = %d)\n", filename, Nmax); 
@@ -386,18 +377,19 @@ int ReadManySacs_WithDiffLength (double **xOut[], t_HeaderInfo *SacHeaderOut[], 
 		if ( (pch = memchr(phdr1->sta, ' ', 8)) ) pch[0] = '\0';
 		if ( (pch = memchr(phdr1->chn, ' ', 8)) ) pch[0] = '\0';
 		if ( (pch = memchr(phdr1->loc, ' ', 8)) ) pch[0] = '\0';
-		if ( !strncmp(phdr1->loc,"-123", 4) ) phdr1->loc[0] = '\0';
+		if ( !strncmp(phdr1->loc, SAC_CHAR_UNDEFINED, 6) ) phdr1->loc[0] = '\0';
 		
 		if (nerr) {
 			printf("ReadManySacs: Error reading %s file (rsac1, nerr=%d)\n", filename, nerr);
 			DestroyFilelist(filenames);
-			Destroy_DoubleArrayList(x, Tr);
+			Destroy_FloatArrayList(x, Tr);
 			free(sig);
 			free(SacHeader);
 			return -2;
 		}
 		if (fabs(dt - SacHeader->dt) > dt*0.001) {
 			printf ("ReadManySacs: Different sampling rate!!! (%f:%f, %s)\n", SacHeader->dt, dt, filename);
+			printf ("ReadManySacs: Skipping trace %u\n", tr);
 			free(x[tr-nskip]);
 			nskip += 1;
 			continue;
@@ -414,8 +406,7 @@ int ReadManySacs_WithDiffLength (double **xOut[], t_HeaderInfo *SacHeaderOut[], 
 		phdr1->t    = my_timegm(&tm);
 		
 		/* Copy the data */
-		px = x[tr-nskip];
-		for (n=0; n<npts; n++) px[n] = (double)sig[n];
+		memcpy(x[tr-nskip], sig, npts*sizeof(float));
 	}
 	Tr -= nskip;
 	
@@ -500,10 +491,10 @@ int CreateFilelist (char **filename[], unsigned int *Tr, char *filelist) {
 	return er;
 }
 
-int RemoveZeroTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *pTr, unsigned int N) {
+int RemoveZeroTraces (float **xOut[], t_HeaderInfo *SacHeader[], unsigned int *pTr, unsigned int N) {
 	unsigned int tr, n, nskip;
 	int ia1;
-	double **x = *xOut, *px;
+	float **x = *xOut, *px;
 	t_HeaderInfo *phd = *SacHeader;
 	
 	if (xOut == NULL || SacHeader == NULL || pTr == NULL) {
@@ -515,7 +506,7 @@ int RemoveZeroTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *
 		ia1 = 0;
 		px = x[tr];
 		for (n=0; n<N; n++)
-			if (0 != (float)px[n]) { ia1 = 1; break; }
+			if (0 != px[n]) { ia1 = 1; break; }
 		if (ia1 == 0) {
 			nskip++;
 			fftw_free(x[tr]); x[tr] = NULL;
@@ -532,12 +523,11 @@ int RemoveZeroTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *
 	return 0;
 }
 
-int Read_ManySacsFile (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *infile) {
+int Read_ManySacsFile (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *infile) {
 	t_HeaderManySacsBinary mhdr;
 	t_HeaderInfo *SacHeader = NULL;
-	double **x = NULL, *px;
-	float *sig = NULL;
-	unsigned int tr, Tr, n, N;
+	float **x = NULL;
+	unsigned int tr, Tr, N, npts;
 	size_t nitems;
 	int nerr = 0;
 	FILE *fid;
@@ -565,8 +555,7 @@ int Read_ManySacsFile (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned i
 	N  = mhdr.npts;
 	
 	if (NULL == (SacHeader = (t_HeaderInfo *)calloc(Tr, sizeof(t_HeaderInfo)) )) nerr = 4;
-	if (NULL == (x = Create_DoubleArrayList (N, Tr) )) nerr = 4;
-	if (NULL == (sig = (float *)calloc(N, sizeof(float)) )) nerr = 4;
+	if (NULL == (x = Create_FloatArrayList (N, Tr) )) nerr = 4;
 	
 	if (nerr == 4) {
 		printf("ReadManySacsFile: Out of memory when reading %s.\n", infile);
@@ -577,21 +566,20 @@ int Read_ManySacsFile (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned i
 				printf("ReadManySacsFile: Unexpected end of %s.\n", infile);
 				nerr = 5; break;
 			}
-			nitems = fread(sig, sizeof(float), N, fid);
-			if (nitems != N) { 
+			npts = SacHeader[tr].npts;
+			if (N < npts) npts = N;
+			nitems = fread(x[tr], sizeof(float), npts, fid);
+			if (nitems != npts) { 
 				printf("ReadManySacsFile: Unexpected end of %s.\n", infile);
 				nerr = 5; break;
 			}
-			px = x[tr];
-			for (n=0; n<N; n++) px[n] = (double)sig[n];
 		}
 	}
 	
 	if (nerr) {
 		free(SacHeader);
-		Destroy_DoubleArrayList (x, Tr);
+		Destroy_FloatArrayList (x, Tr);
 	}
-	free(sig);
 	
 	fclose(fid);
 	
@@ -604,14 +592,10 @@ int Read_ManySacsFile (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned i
 	return nerr;
 }
 
-int Write_ManySacsFile (double *x[], t_HeaderInfo *hdr, unsigned int Tr, unsigned int N, char *outfile) {
+int Write_ManySacsFile (float *x[], t_HeaderInfo *hdr, unsigned int Tr, unsigned int N, char *outfile) {
 	t_HeaderManySacsBinary mhdr = {"MSACS1", Tr, N, 1};
-	unsigned int tr, n;
-	float *data, *pf1;
-	double *pd1;
+	unsigned int tr;
 	FILE *fid;
-	
-	if (NULL == (data = (float *)malloc(N*sizeof(float)) )) return -1;
 	
 	if (NULL == (fid = fopen(outfile, "w"))) {
 		printf("WriteManySacsFile: cannot create %s file\n", outfile);
@@ -621,14 +605,10 @@ int Write_ManySacsFile (double *x[], t_HeaderInfo *hdr, unsigned int Tr, unsigne
 	fwrite(&mhdr, sizeof(t_HeaderManySacsBinary), 1, fid);
 	for (tr=0; tr<Tr; tr++) {
 		fwrite(&hdr[tr], sizeof(t_HeaderInfo), 1, fid);
-		pd1 = x[tr];
-		pf1 = data;
-		for (n=0; n<N; n++) pf1[n] = (float)pd1[n];
-		fwrite(data, sizeof(float), N, fid);
+		fwrite(x[tr], sizeof(float), N, fid);
 	}
 	
 	fclose(fid);
-	free(data);
 	
 	return 0;
 }

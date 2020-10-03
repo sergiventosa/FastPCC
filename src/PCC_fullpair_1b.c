@@ -1,27 +1,46 @@
 /*****************************************************************************/
-/* Provided a list of stations, this program computes the cross-correlations */
-/* between all possible pairs.                                               */
+/* Software to compute interstation correlations, including fast implementa- */
+/* tions of geometrically-normalized (CCGN), 1-bit correlation (1-bit CCGN), */
+/* and phase cross-correlations (PCC) with and without using the GPU.        */
 /*                                                                           */
 /* Authors: Sergi Ventosa Rahuet (sergiventosa@hotmail.com)                  */
 /*                                                                           */
 /* Main features:                                                            */
-/*   - Compute CCGN and/or PCC with power of 1 or 2.                         */
+/*   - Compute CCGN, 1-bit CCGN and PCC.                                     */
 /*                                                                           */
 /* **** 2016 ****                                                            */
 /* May19 (1a) Fast implementation of PCC with power of 2 using fftw3         */
 /*  - Not taking care of zero samples.                                       */
 /* **** 2018 ****                                                            */
-/* Mar21 (1a) A few features has been added along the way.                   */
-/*  - Compute PCC with power of 1.                                           */
+/* Mar21 (1b) A few features has been added along the way.                   */
+/*  - Compute PCC with any power.                                            */
 /*  - Compute CCGN using fftw3.                                              */
 /*  - Clipping.                                                              */
 /*****************************************************************************/
+/* Temporal: Save loc '' of Geoscope (G) stations as '00'                    */
+/*****************************************************************************/
+/* **** 2020 ****                                                            */
+/* Jun25 (1b) A few minor updates.                                           */
+/*  - Consider milli-seconds in MakePairedLists() and SortTraces()           */
+/*  - Relax criteria to accept SAC files in ReadManySacs(). The default      */
+/*    sequence length (first trace) can be modified with the Nmax parameter. */
+/*    Too long sequences are now cut instead of rejected.                    */
+/* Sep16 (1b) A few minor updates.                                           */
+/*   - The O sac header field now contains the absolute time difference of   */
+/*     the begin times of the traces (the actual "zero" lag time). Pairs     */
+/*     misaligned by more than half a second are still rejected (alignment   */
+/*     must be done in advance).                                             */
+/*   - Modified the format of the output binary file (msacs) to save the     */
+/*     actual "zero" lag time for each correlation pair.                     */
+/*****************************************************************************/
 
-#include <complex.h>  /* When done before fftw3.h, makes fftw3.h use C99 complex types. */
+
+#include <complex.h>  /* fftw3.h use C99 complex types when complex.h is included before. */
 #include <fftw3.h>
 #include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
@@ -30,6 +49,7 @@
 #include <float.h>
 #include "FFTapps.h"
 #include "ReadManySacs.h"
+#include "rotlib.h"
 #include "sac2bin.h"
 #include "sph.h"
 
@@ -49,9 +69,11 @@ typedef struct {
 	unsigned int  ccgn;
 	unsigned int  cc1b;
 	unsigned int  clip;
+	int           mincc;
+	int           Nmax;     /* Maximum number of samples per trace, default defined by the first file. */
 	double        std;
 	double        mindist;  /* Min distance in degrees. */ 
-	double        maxdist;  /* Max distance in degrees.  */ 
+	double        maxdist;  /* Max distance in degrees. */ 
 	double        awhite[2];
 	char          *fin1;
 	char          *fin2;
@@ -60,26 +82,27 @@ typedef struct {
 typedef struct {
 	unsigned int  ind;
 	time_t        time;
+	int32_t       msec;
 } t_elem;
 
 int PCCfullpair_main (t_PCCmatrix *fpcc);
 
-int StoreInManySacs (double **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderInfo *SacHeader1, 
+int StoreInManySacs (float **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderInfo *SacHeader1, 
 	t_HeaderInfo *SacHeader2, float dt, char *ccname);
-int StoreInManyBins (double **y, unsigned int L, unsigned int Tr, int Lag1,  t_HeaderInfo *SacHeader1, 
+int StoreInManyBins (float **y, unsigned int L, unsigned int Tr, int Lag1,  t_HeaderInfo *SacHeader1, 
 	t_HeaderInfo *SacHeader2, float dt, char *ccname);
 int wrsac(char *filename, char *kstnm, float beg, float dt, float *y, int nsamp, t_HeaderInfo *ptr1, t_HeaderInfo *ptr2);
 
 void infooo();
 void usage();
-void clipping (double *x, unsigned int N);
-int RemoveOutlierTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0, float *std, float nstd);
-int SortTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0);
-int MakePairedLists (double **xOut1[], t_HeaderInfo *SacHeader1[], unsigned int *TrOut1, 
-	double **xOut2[], t_HeaderInfo *SacHeader2[], unsigned int *TrOut2);
-int AveWhite (double **x0, unsigned int N, unsigned int Tr, double freq[2], double dt);
+void clipping (float *x, unsigned int N);
+int RemoveOutlierTraces (float **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0, float *std, float nstd);
+int SortTraces (float **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0);
+int MakePairedLists (float **xOut1[], t_HeaderInfo *SacHeader1[], unsigned int *TrOut1, 
+	float **xOut2[], t_HeaderInfo *SacHeader2[], unsigned int *TrOut2);
+int AveWhite (float **x0, unsigned int N, unsigned int Tr, double freq[2], double dt);
 float qmedian(float a[], int n);
-float qabsmedian(double input[], int n);
+float qabsmedian(float input[], int n);
 
 int RDint    (int * const x, const char *str);
 int RDdouble (double * const x, const char *str);
@@ -87,7 +110,7 @@ int RDdouble_array (double * const x, char * const str, unsigned int N);
 
 /* Main function: Mainly reading parameters. */
 int main(int argc, char *argv[]) {
-	t_PCCmatrix fpcc = {0, 0, 2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, {0, 0}, NULL, NULL};  /* Default parameters. */
+	t_PCCmatrix fpcc = {0, 0, 2, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, {0, 0}, NULL, NULL};  /* Default parameters. */
 	int i, er;
 
 	if (argc < 3) {
@@ -119,6 +142,8 @@ int main(int argc, char *argv[]) {
 		else if (!strncmp(argv[i], "std=",   4)) er = RDdouble(&fpcc.std, argv[i] + 4);
 		else if (!strncmp(argv[i], "mindist=", 8)) er = RDdouble(&fpcc.mindist, argv[i] + 8);
 		else if (!strncmp(argv[i], "maxdist=", 8)) er = RDdouble(&fpcc.maxdist, argv[i] + 8);
+		else if (!strncmp(argv[i], "mincc=", 6)) er = RDint(&fpcc.mincc, argv[i] + 6);
+		else if (!strncmp(argv[i], "Nmax=",  5)) er = RDint(&fpcc.Nmax, argv[i]  + 5);
 		else if (!strncmp(argv[i], "awhite=",7)) er = RDdouble_array(fpcc.awhite, argv[i] + 7, 2);
 		else if (!strncmp(argv[i], "info",   4)) {
 			infooo();
@@ -133,10 +158,10 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	t_HeaderInfo *SacHeader1=NULL, *SacHeader2=NULL;
 	float *std=NULL;
 	float dt, dt1;
-	double **x1=NULL, **x2=NULL, **y=NULL, *px, da2;
-	double lat1=-90, lon1=0, lat2=90, lon2=0, gcarc;
+	float **x1=NULL, **x2=NULL, **y=NULL, *px;
+	double lat1=-90, lon1=0, lat2=90, lon2=0, gcarc, da2;
 	unsigned int tr, Tr, Tr1, Tr2, n, N, N1;
-	int Lag1, Lag2, ia1, L, nerr=0;
+	int Lag1, Lag2, ia1, L, nerr=0, nerr1=0;
 	char nickpcc[16]; /* Up to the first 8 are saved in the sac header. */
 	
 	/* Input checkings */
@@ -151,7 +176,10 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	} else if (fpcc->iformat == 2) { 
 		if ( 0 != ReadLocation_ManySacsFile (&lat1, &lon1, fpcc->fin1) ) return 0;
 		if ( 0 != ReadLocation_ManySacsFile (&lat2, &lon2, fpcc->fin2) ) return 0;
-	} else { printf("PCCfullpair_main: Unknown format."); nerr = 5; }
+	} else { 
+		printf("PCCfullpair_main: Unknown format."); 
+		nerr = 5; 
+	}
 	
 	lat1 *= DEG2RAD;
 	lon1 *= DEG2RAD;
@@ -172,30 +200,54 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 		}
 	}
 	
-	if (fpcc->iformat == 1)      nerr = ReadManySacs (&x1, &SacHeader1, &Tr1, &N1, &dt1, fpcc->fin1);
-	else if (fpcc->iformat == 2) nerr = Read_ManySacsFile (&x1, &SacHeader1, &Tr1, &N1, &dt1, fpcc->fin1);
-	else { printf("PCCfullpair_main: Unknown format."); nerr = 5; }
-	if (nerr) printf("PCCfullpair_main: Something when wrong in ReadManySacs when reading the first filelist! (nerr = %d)\n", nerr);
-	if (Tr1==0) { printf("PCCfullpair_main: %s is empty.", fpcc->fin1); return 0; }
+	if (fpcc->iformat == 1)
+		nerr1 = ReadManySacs (&x1, &SacHeader1, &Tr1, &N1, &dt1, fpcc->fin1);
+	else if (fpcc->iformat == 2)
+		nerr1 = Read_ManySacsFile (&x1, &SacHeader1, &Tr1, &N1, &dt1, fpcc->fin1);
 	
-	if (fpcc->iformat == 1)      nerr = ReadManySacs (&x2, &SacHeader2, &Tr2, &N, &dt, fpcc->fin2);
-	else if (fpcc->iformat == 2) nerr = Read_ManySacsFile (&x2, &SacHeader2, &Tr2, &N, &dt, fpcc->fin2);
-	else { printf("PCCfullpair_main: Unknown format."); nerr = 5; }
-	if (nerr) printf("PCCfullpair_main: Something when wrong in ReadManySacs when reading the second filelist! (nerr = %d)\n", nerr);
+	if (Tr1==0) { printf("PCCfullpair_main: %s is empty.", fpcc->fin1); return 0; }
+	if (Tr1 < fpcc->mincc) {
+		printf("PCCfullpair_main: Too few sequences from station %s (%d < %d)\n", fpcc->fin1, Tr1, fpcc->mincc); 
+		Destroy_FloatArrayList (x1, Tr1);
+		free (SacHeader1);
+		return 0;
+	}
+	if (nerr1) { printf("PCCfullpair_main: Something went wrong when reading the data from station 1! (nerr = %d)\n", nerr1); return nerr1; }
+	
+	N = fpcc->Nmax;
+	if (fpcc->iformat == 1)
+		nerr  = ReadManySacs (&x2, &SacHeader2, &Tr2, &N, &dt, fpcc->fin2);
+	else if (fpcc->iformat == 2)
+		nerr  = Read_ManySacsFile (&x2, &SacHeader2, &Tr2, &N, &dt, fpcc->fin2);
+	else { 
+		printf("PCCfullpair_main: Unknown format."); 
+		nerr = 5; 
+	}
+	
 	if (Tr2==0) { printf("PCCfullpair_main: %s is empty.", fpcc->fin2); return 0; }
+	if (Tr2 < fpcc->mincc) {
+		printf("PCCfullpair_main: Too few sequences from station %s (%d < %d)\n", fpcc->fin2, Tr2, fpcc->mincc); 
+		Destroy_FloatArrayList (x1, Tr1);
+		Destroy_FloatArrayList (x2, Tr2);
+		free (SacHeader1);
+		free (SacHeader2);
+		return 0;
+	}
+	if (nerr)  { printf("PCCfullpair_main: Something went wrong when reading the data from station 2! (nerr = %d)\n", nerr);  return nerr; }
+	
 	if (N1 != N) printf("PCCfullpair_main: Traces of these stations has different lengths: %u:%u\n", N1, N);
 	if (dt1 != dt) printf("PCCfullpair_main: Traces of these stations has different samplings: %f:%f\n", dt1, dt);
 	
 	nerr = RemoveZeroTraces (&x1, &SacHeader1, &Tr1, N);
-	if (nerr) printf("PCCfullpair_main: Something when wrong in RemoveZeroTraces of station 1! (nerr = %d)\n", nerr);
+	if (nerr) printf("PCCfullpair_main: Something went wrong when RemoveZeroTraces of station 1! (nerr = %d)\n", nerr);
 	nerr = RemoveZeroTraces (&x2, &SacHeader2, &Tr2, N);
-	if (nerr) printf("PCCfullpair_main: Something when wrong in RemoveZeroTraces of station 2! (nerr = %d)\n", nerr);
+	if (nerr) printf("PCCfullpair_main: Something went wrong when RemoveZeroTraces of station 2! (nerr = %d)\n", nerr);
 	
 	/* Outliers and clippling for station 1 */
 	/* Data std. (The signal should have no mean). */
 	if (fpcc->std) {
 		if (NULL == (std = (float *)calloc(Tr1, sizeof(float)) )) {
-			Destroy_DoubleArrayList(x1, Tr1);
+			Destroy_FloatArrayList(x1, Tr1);
 			free(SacHeader1);
 			return 4;
 		}
@@ -215,13 +267,13 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	/* Remove traces having much higher or lower energy than the others ones. */
 	if (fpcc->std) {
 		nerr = RemoveOutlierTraces (&x1, &SacHeader1, &Tr1, std, fpcc->std);
-		if (nerr) printf("PCCfullpair_main: Something when wrong in RemoveOutlierTraces of station 1! (nerr = %d)\n", nerr);
+		if (nerr) printf("PCCfullpair_main: Something went wrong when RemoveOutlierTraces of station 1! (nerr = %d)\n", nerr);
 	}
 	
 	/* Outliers and clippling for station 2 */
 	if (fpcc->std) {
 		if (NULL == (std = (float *)calloc(Tr2, sizeof(float)) )) {
-			Destroy_DoubleArrayList(x2, Tr2);
+			Destroy_FloatArrayList(x2, Tr2);
 			free(SacHeader2);
 			return 4;
 		}
@@ -241,7 +293,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	/* Remove traces having much higher or lower energy than the others ones. */
 	if (fpcc->std) {
 		nerr = RemoveOutlierTraces (&x2, &SacHeader2, &Tr2, std, fpcc->std);
-		if (nerr) printf("PCCfullpair_main: Something when wrong in RemoveOutlierTraces of station 2! (nerr = %d)\n", nerr);
+		if (nerr) printf("PCCfullpair_main: Something went wrong when RemoveOutlierTraces of station 2! (nerr = %d)\n", nerr);
 		free(std);
 	}
 	
@@ -253,6 +305,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	MakePairedLists (&x1, &SacHeader1, &Tr1, &x2, &SacHeader2, &Tr2);
 	Tr = Tr1;
 	
+	/* Whittenings */
 	if (fpcc->awhite[0] > 0 && fpcc->awhite[1] > fpcc->awhite[0]) {
 		AveWhite (x1, N, Tr, fpcc->awhite, dt);
 		AveWhite (x2, N, Tr, fpcc->awhite, dt);
@@ -260,10 +313,10 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	
 	/* Calculate lags. */
 	if (fpcc->nl1) Lag1 = fpcc->nl1;
-	else if (fpcc->tl1) Lag1 = fpcc->tl1 / dt;
+	else if (fpcc->tl1) Lag1 = (int)round(fpcc->tl1 / (double)dt);
 	else Lag1 = 0;
 	if (fpcc->nl2) Lag2 = fpcc->nl2;
-	else if (fpcc->tl1) Lag2 = fpcc->tl2 / dt;
+	else if (fpcc->tl1) Lag2 = (int)round(fpcc->tl2 / (double)dt);
 	else Lag2 = 0;
 	
 	if (Lag1 > Lag2) { ia1 = Lag1; Lag1 = Lag2; Lag2 = ia1; }
@@ -271,48 +324,54 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	L = Lag2-Lag1+1;
 	
 	printf("Lag1 = %d, Lag2 = %d, L = %d, N = %d, Tr = %d, gcarc = %f\n", Lag1, Lag2, L, N, Tr, gcarc);
-	
-	if (fpcc->v==2)      strcpy(nickpcc, "pcc2");
-	else if (fpcc->v==1) strcpy(nickpcc, "pcc1");
-	else sprintf(nickpcc, "pcc%.1f", fpcc->v);
-	
-	/* Output array memory */
-	if (NULL == (y = Create_DoubleArrayList (L, Tr) )) {
-		printf ("PCCfullpair_main: Out of memory on the output array (%d x %d)\n", L, Tr);
-		nerr = 4;
+	if (Tr <= fpcc->mincc) {
+		if (!Tr) printf("NO INTERSTATION CORRELATION TO BE COMPUTED.\n");
+		else printf("ONLY %d INTERSTATION CORRELATION COULD BE COMPUTED.\n", Tr); 
 	} else {
-		/* The actual cross-correlations */
-		if (fpcc->pcc) {  /* PCCs: */
-			if (fpcc->v==2)      pcc2_set (y, x1, x2, N, Tr, Lag1, Lag2);
-			else if (fpcc->v==1) pcc1_set (y, x1, x2, N, Tr, Lag1, Lag2);
-			else pcc_set (y, x1, x2, N, Tr, fpcc->v, Lag1, Lag2);
-			if (fpcc->oformat==1) 
-				StoreInManySacs (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, nickpcc);
-			else if (fpcc->oformat==2) 
-				StoreInManyBins (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, nickpcc);
-		}
+		if (fpcc->v==2)      strcpy(nickpcc, "pcc2");
+		else if (fpcc->v==1) strcpy(nickpcc, "pcc1");
+		else sprintf(nickpcc, "pcc%.1f", fpcc->v);
 		
-		if (fpcc->ccgn) {  /* GNCCs */
-			ccgn_set (y, x1, x2, N, Tr, Lag1, Lag2);
-			if (fpcc->oformat==1) 
-				StoreInManySacs (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "ccgn");
-			else if (fpcc->oformat==2) 
-				StoreInManyBins (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "ccgn");
+		/* Output array memory */
+		if (NULL == (y = Create_FloatArrayList (L, Tr) )) {
+			printf ("PCCfullpair_main: Out of memory on the output array (%d x %d)\n", L, Tr);
+			nerr = 4;
+		} else {
+			/* The actual cross-correlations */
+			CorrectRevesedPolarity (x1, N, Tr, SacHeader1); /* Corrects for sign-flips on a component. */
+			CorrectRevesedPolarity (x2, N, Tr, SacHeader2);
+			if (fpcc->pcc) {  /* PCCs: */
+				if (fpcc->v==2)      pcc2_set (y, x1, x2, N, Tr, Lag1, Lag2);
+				else if (fpcc->v==1) pcc1_set (y, x1, x2, N, Tr, Lag1, Lag2);
+				else pcc_set (y, x1, x2, N, Tr, fpcc->v, Lag1, Lag2);
+				if (fpcc->oformat==1) 
+					StoreInManySacs (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, nickpcc);
+				else if (fpcc->oformat==2) 
+					StoreInManyBins (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, nickpcc);
+			}
+			
+			if (fpcc->ccgn) {  /* GNCCs */
+				ccgn_set (y, x1, x2, N, Tr, Lag1, Lag2);
+				if (fpcc->oformat==1) 
+					StoreInManySacs (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "ccgn");
+				else if (fpcc->oformat==2) 
+					StoreInManyBins (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "ccgn");
+			}
+			
+			if (fpcc->cc1b) {  /* 1-bit + GNCCs */
+				cc1b_set (y, x1, x2, N, Tr, Lag1, Lag2);
+				if (fpcc->oformat==1) 
+					StoreInManySacs (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "cc1b");
+				else if (fpcc->oformat==2) 
+					StoreInManyBins (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "cc1b");
+			}
+			
+			Destroy_FloatArrayList (y, Tr);
 		}
-		
-		if (fpcc->cc1b) {  /* 1-bit + GNCCs */
-			cc1b_set (y, x1, x2, N, Tr, Lag1, Lag2);
-			if (fpcc->oformat==1) 
-				StoreInManySacs (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "cc1b");
-			else if (fpcc->oformat==2) 
-				StoreInManyBins (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "cc1b");
-		}
-		
-		Destroy_DoubleArrayList (y, Tr);
 	}
-	
-	Destroy_DoubleArrayList (x1, Tr);
-	Destroy_DoubleArrayList (x2, Tr);
+
+	Destroy_FloatArrayList (x1, Tr);
+	Destroy_FloatArrayList (x2, Tr);
 	free (SacHeader1);
 	free (SacHeader2);
 	
@@ -322,83 +381,148 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 void infooo() {
 	puts("\nThis program computes the geometrically-normalized (CCGN), 1-bit correlation (1-bit CCGN) and phase cross-correlations (PCC) between seismograms from two stations.");
 	puts("I developed this program for Ventosa et al. (2017) and I further developed and presented it in Ventosa et al. (2019). Information on the PCC is published in Schimmel (1999).\n");
-	puts("Schimmel M. 1999.  Phase cross-correlations: Design, comparisons, and applications, Bulletin of the Seismological Society of America, 89(5), 1366-1378.");
-	puts("Ventosa, S., Schimmel, M., & Stutzmann, E., 2017. Extracting surface waves, hum and normal modes: Time-scale phase-weighted stack and beyond, Geophysical Journal International, 211, 30-44, doi:10.1093/gji/ggx284");
-	puts("Ventosa, S., Schimmel, M., & Stutzmann, E., 2019. Towards the processing of large data volumes with phase cross-correlation, Seismological Research Letters, doi:10.1785/0220190022"); 
+	puts("Schimmel, M., 1999.  Phase cross-correlations: Design, comparisons, and applications, Bulletin of the Seismological Society of America, 89(5), 1366-1378.");
+	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2017. Extracting surface waves, hum and normal modes: Time-scale phase-weighted stack and beyond, Geophysical Journal International, 211(1), 30-44, doi:10.1093/gji/ggx284");
+	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2019. Towards the processing of large data volumes with phase cross-correlation, Seismological Research Letters, 90(4), 1663-1669, doi:10.1785/0220190022"); 
 	puts("AUTHOR: Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)");
-	puts("Last modification: 23/05/2019\n");
+	puts("Last modification: 01/10/2020\n");
 }
 
 void usage() {
-	puts("\nProvided the available traces from two stations, this program computes correlations between them.");
+	puts("\nCompute interstation correlations, including fast implementations of geometrically-normalized (CCGN),"); 
+	puts("1-bit correlation (1-bit CCGN), and phase cross-correlations (PCC) with and without using the GPU.");
 	puts("");
 	puts("USAGE: PCC_fullpair_1b filelist1 filelist2 parameters");
-	puts("  filelist1:  text file containing a list of SAC files for station 1. One file name per line.");
-	puts("              Traces must have the same begin (b), number of samples (nsmpl) and sampling interval");
-	puts("              (dt). Only the date and time header information (nzxxx header variables) is used to");
-	puts("              pair the traces. Each trace is used only in one pair."); 
+	puts("  filelist1:  text file containing a list of SAC files for station 1. One filename per line.");
 	puts("  filelist2:  idem to filelist1 but for station 2.");
-	puts("  parameters: provided in arbitrary order without any blanck around '=' .");
+	puts("  parameters: in arbitrary order without any blanck around '='.");
 	puts("");
-	puts("  Data can also be saved in a single file per station in the msacs format (see the example below).");
+	puts("The trace are paired automatically according to their date and time header information (nzxxx header ");
+	puts("variables) using each trace only in one pair. All traces must have the same begin time (b), number of");
+	puts("samples (nsmpl) and sampling interval.");
 	puts("");
 	puts("Most commonly used parameters");
-	puts("  nl1=   : starting lag sample. nl1=0 by default.");
-	puts("  nl2=   : ending lag sample. nl2=0 by default.");
-	puts("  tl1=   : starting lag time in seconds. Modifies nl1. tl1=0 by default.");
-	puts("  tl2=   : ending lag time in seconds. Modifies nl2. tl2=0 by default.");
-	puts("  ccgn   : compute (geometrically) normalized cross-correlation. Not computed by default.");
+	puts("  nl1=   : stating sample lag. nl1=0 by default.");
+	puts("  nl2=   : ending sample lag. nl2=0 by default.");
+	puts("  tl1=   : stating relative time lag in seconds. Modifies nl1. tl1=0 by default.");
+	puts("  tl2=   : ending relative time lag in seconds. Modifies nl2. tl2=0 by default.");
+	puts("  Nmax=  : maximum number of samples per sequence. The default is the length of the first"); 
+	puts("           sequence in the filelist.");
+	puts("  ccgn   : compute geometrically normalized cross-correlation. Not computed by default.");
 	puts("  cc1b   : compute 1-bit amplitude normalization followed by ccgn. Not computed by default.");
 	puts("  pcc    : compute phase cross-correlation. Not computed by default.");
 	puts("  v      : pcc power, sum(|a+b|^v - |a+b|^v). Default is v=2");
-	puts("  clip   : clip high-amplitude signals. The threshold is defined per trace at 4*MAD(x)/0.6745,");
-	puts("           i.e., 4 times the standard deviation of the modulus.");
 	puts("  info   : write background and main references to screen.");
 	puts("           Just type: PCC_fullpair_1b info.");
 	puts("");
 	puts("Input/Output data format");
 	puts("  isac   : Input traces are in the SAC format (default)");
-	puts("  imsacs : Input traces are saved in two files, one per station.");
+	puts("  imsacs : Input traces are garthered in two files, one per station, replacing filelist1 and filelist2");
+	puts("           above. Use the Filelist2msacs code to group the sac files in single msac file.");
 	puts("  osac   : Output interstation correlations are saved in many files in the SAC format (default)");
-	puts("  obin   : Output interstation correlations are saved in one file that can be read by the time-");
-	puts("           scale phase-weighted stack code. https://github.com/sergiventosa/ts-PWS");
+	puts("  obin   : Output interstation correlations are saved in one file to speed up data reading in");
+	puts("           the ts-PWS stacking code, https://github.com/sergiventosa/ts-PWS.  ");
+	puts("");
+	puts("Additional functionalities");
+	puts("  clip   : clip input sequences before the correlations at 4*MAD/0.6745, about 4 sigmas.");
+	puts("  std=   : remove sequences whose samples have a standard deviation n times higher than average.");
+	puts("  awhite=[f1 f2] : smooth spectral whittening in the frequency band f1 - f2 (f1 < f2) using a"); 
+	puts("                   Blackman window of 11 samples.");
 	puts("");
 	puts("EXAMPLES");
-	puts("  PCC of power 1 and CCGN between the traces listed in filelist1.txt and filelist2.txt recorded");
-	puts("  at the same time (i.e., equal SAC header variables nzxxx):");
+	puts("  Computes PCC of power 1 and CCGN between the traces listed in filelist1.txt and filelist2.txt");
+	puts("   recorded at the same time (i.e., equal SAC header variables nzxxx):");
 	puts("     PCC_fullpair_1b filelist1.txt filelist2.txt tl1=-1000 tl2=1000 ccgn pcc v=1");
 	puts("");
-	puts("  Typically, the traces listed in filelist1.txt and filelist2.txt share the same station, channel");
-	puts("  and component; consequently, the code is designed to use each trace only in one correlation.");
+	puts("  The traces listed in filelist1.txt and filelist2.txt typically share the same station, channel");
+	puts("  and component codes; consequently, the code is designed to use each trace only in one pair.");
 	puts("");
 	puts("  PCC of power 2 and 1-bit CCGN between the traces stored in sta1.msacs and sta2.msacs:");
 	puts("     Filelist2msacs filelist1.txt sta1.msacs");
 	puts("     Filelist2msacs filelist2.txt sta2.msacs");
 	puts("     PCC_fullpair_1b sta1.msacs sta2.msacs imsacs tl1=-1000 tl2=1000 cc1b pcc v=2");
 	puts("");
-	puts("AUTHOR: Sergi Ventosa, 23/05/2019");
+	puts("AUTHOR: Sergi Ventosa, 10/01/2020");
+	puts("Version 1.0.2");
 	puts("Please, do not hesitate to send bugs, comments or improvements to sergiventosa(at)hotmail.com\n");
 }
 
-int StoreInManySacs (double **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderInfo *SacHeader1, 
+int isstring (char *s, unsigned int N) {
+	unsigned int n;
+	
+	for (n=0; n<N; n++) 
+		if (!isalnum(s[n]) && !isspace(s[n]) && !ispunct(s[n]) && s[n] != 0 ) return n+1;
+	return 0;
+}
+
+int check_header (t_HeaderInfo *h) {
+	int n, out = 0;
+	
+	if (fabs(h->stla) > 90 || fabs(h->stlo) > 180) out = 1;
+	if (isstring(h->net, 8) || isstring(h->sta, 8) || isstring(h->chn, 8) || isstring(h->loc, 8) ) out = 1; 
+	
+	if (out) {
+		printf("\nWARNING: Station HeaderInfo corrupted\n");
+		printf("  lat=%f\n lon=%f\n", h->stla, h->stlo);
+		printf("  net=%.8s\n sta=%.8s\n loc=%.8s\n chn=%.8s\n", h->net, h->sta, h->loc, h->chn);
+		if (fabs(h->stla) > 90)  printf("stla is not fine\n");
+		if (fabs(h->stlo) > 180) printf("stlo is not fine\n");
+		if ((n = isstring(h->net, 8))) { n--; printf("net[%d] is not fine (%d)\n", n, h->net[n]); }
+		if ((n = isstring(h->sta, 8))) { n--; printf("sta[%d] is not fine (%d)\n", n, h->sta[n]); }
+		if ((n = isstring(h->chn, 8))) { n--; printf("chn[%d] is not fine (%d)\n", n, h->chn[n]); }
+		if ((n = isstring(h->loc, 8))) { n--; printf("loc[%d] is not fine (%d)\n", n, h->loc[n]); }
+	}
+	return out;
+}
+
+int check_binheader (t_ccheader *h) {
+	int n, out = 0;
+	
+	if (fabs(h->stlat1) > 90 || fabs(h->stlon1) > 180 || fabs(h->stlat2) > 90 || fabs(h->stlon2) > 180) out = 1;
+	if (isstring(h->net1, 8) || isstring(h->sta1, 8) || isstring(h->chn1, 8) || isstring(h->loc1, 8) ) out = 1; 
+	if (isstring(h->net2, 8) || isstring(h->sta2, 8) || isstring(h->chn2, 8) || isstring(h->loc2, 8) ) out = 1; 
+	
+	if (out) {
+		printf("\nWARNING: Correlation header corrupted\n");
+		printf(" stlat1=%f\n stlon2=%f\n", h->stlat1, h->stlon1);
+		printf(" stlat2=%f\n stlon2=%f\n", h->stlat2, h->stlon2);
+		printf(" net1=%.8s\n sta1=%.8s\n loc1=%.8s\n chn1=%.8s\n", h->net1, h->sta1, h->loc1, h->chn1);
+		printf(" net2=%.8s\n sta2=%.8s\n loc2=%.8s\n chn2=%.8s\n", h->net2, h->sta2, h->loc2, h->chn2);
+		if (fabs(h->stlat1) > 90)  printf("stlat1 is not fine\n");
+		if (fabs(h->stlon1) > 180) printf("stlon1 is not fine\n");
+		if (fabs(h->stlat2) > 90)  printf("stlat2 is not fine\n");
+		if (fabs(h->stlon2) > 180) printf("stlon2 is not fine\n");
+		if ((n = isstring(h->net1, 8))) { n--; printf("net1[%d] is not fine (%d)\n", n, h->net1[n]); }
+		if ((n = isstring(h->sta1, 8))) { n--; printf("sta1[%d] is not fine (%d)\n", n, h->sta1[n]); }
+		if ((n = isstring(h->chn1, 8))) { n--; printf("chn1[%d] is not fine (%d)\n", n, h->chn1[n]); }
+		if ((n = isstring(h->loc1, 8))) { n--; printf("loc1[%d] is not fine (%d)\n", n, h->loc1[n]); }
+		if ((n = isstring(h->net2, 8))) { n--; printf("net2[%d] is not fine (%d)\n", n, h->net2[n]); }
+		if ((n = isstring(h->sta2, 8))) { n--; printf("sta2[%d] is not fine (%d)\n", n, h->sta2[n]); }
+		if ((n = isstring(h->chn2, 8))) { n--; printf("chn2[%d] is not fine (%d)\n", n, h->chn2[n]); }
+		if ((n = isstring(h->loc2, 8))) { n--; printf("loc2[%d] is not fine (%d)\n", n, h->loc2[n]); }
+	}
+	return out;
+}
+
+int StoreInManySacs (float **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderInfo *SacHeader1, 
 		t_HeaderInfo *SacHeader2, float dt, char *ccname) {
 	char dat[30], outfilename[80], loc1[9], loc2[9];
 	t_HeaderInfo *hdr1, *hdr2;
-	unsigned int n, tr1, trOut;
-	double *pd1;
+	unsigned int tr1, trOut;
 	float *sig;
 	
-	if (NULL == (sig = (float *)calloc(L, sizeof(float)) )) return 1;
-	
 	trOut = 0;
+	check_header (SacHeader1);
+	check_header (SacHeader2);
 	for (tr1=0; tr1<Tr; tr1++) {
 		hdr1 = &SacHeader1[tr1];
 		hdr2 = &SacHeader2[tr1];
 		strncpy(loc1, hdr1->loc, 9);
+		if ( !strncmp(hdr1->net, "G", 4) && !strcmp(loc1, "") ) strcpy(loc1, "00");
 		strncpy(loc2, hdr2->loc, 9);
+		if ( !strncmp(hdr2->net, "G", 4) && !strcmp(loc2, "") ) strcpy(loc2, "00");
 		
-		pd1 = y[trOut++];
-		for (n=0; n<L; n++) sig[n] = (float)pd1[n];
+		sig = y[trOut++];
 		snprintf(dat, 30, "_%s_%04d.%03d.%02d.%02d.%02d", 
 			ccname, hdr1->year, hdr1->yday, hdr1->hour, hdr1->min, hdr1->sec);
 		snprintf(outfilename, 80, "%s.%s%c.%s.%s%c%s.sac", 
@@ -406,31 +530,33 @@ int StoreInManySacs (double **y, unsigned int L, unsigned int Tr, int Lag1, t_He
 		wrsac(outfilename, ccname, Lag1*dt, dt, sig, L, hdr1, hdr2);
 	}
 	
-	free(sig);
 	return 0;
 }
 
-int StoreInBin (double **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderInfo *SacHeader1, 
+int StoreInBin (float **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderInfo *SacHeader1, 
 		t_HeaderInfo *SacHeader2, float dt, char *filename, unsigned int *set, unsigned int *setin1, unsigned int *setin2, unsigned int Trset, char *ccmethod) {
-	unsigned int tr, l;
+	unsigned int tr;
 	int nerr=0;
 	t_ccheader *hdr=NULL;
 	t_HeaderInfo *hdr1, *hdr2;
 	time_t *time=NULL;
-	float *data=NULL, *pf1;
-	double *pd1;
+	float *data=NULL, *lag0=NULL;
 	FILE *fid;
+	
+	check_header (SacHeader1);
+	check_header (SacHeader2);
 	
 	hdr = (t_ccheader *)calloc(1, sizeof(t_ccheader));
 	time = (time_t *)calloc(Trset, sizeof(time_t));
+	lag0 = (float *)calloc(Trset, sizeof(float));
 	data = (float *)calloc(Trset*L, sizeof(float));
-	if (hdr == NULL || time == NULL || data == NULL) {
+	if (hdr == NULL || time == NULL || lag0 == NULL || data == NULL) {
 		printf("StoreInBin: Out of memory (hdr).\n");
 		nerr = -4;
 	} else {
 		/** Header    **/
-		hdr1 = &SacHeader1[set[0]];
-		hdr2 = &SacHeader2[set[0]];
+		hdr1 = &SacHeader1[setin1[0]];
+		hdr2 = &SacHeader2[setin2[0]];
 		strncpy(hdr->method, ccmethod, 8);
 		/* Info station 1. */
 		strncpy(hdr->net1, hdr1->net, 8);
@@ -451,7 +577,7 @@ int StoreInBin (double **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderI
 		/* General info */
 		hdr->nlags   = L;
 		hdr->nseq    = Trset;
-		hdr->tlength = L*dt;
+		hdr->tlength = dt*(L-1);
 		hdr->lag1    = dt*Lag1;
 		hdr->lag2    = dt*(Lag1 + L-1);
 		
@@ -461,38 +587,46 @@ int StoreInBin (double **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderI
 			time[tr] = hdr1->t;
 		}
 		
-		/** Data      **/
+		/** Lag0 info **/
 		for (tr=0; tr<Trset; tr++) {
-			pd1 = y[set[tr]];
-			pf1 = data + tr*L;
-			for (l=0; l<L; l++) pf1[l] = (float)pd1[l];
+			lag0[tr] = difftime(hdr1->t, hdr2->t) + (double)(hdr1->msec - hdr2->msec)/1000 + (hdr1->b - hdr2->b);
 		}
+		
+		/** Data      **/
+		for (tr=0; tr<Trset; tr++)
+			memcpy(data + tr*L, y[set[tr]], L*sizeof(float));
 		
 		/** Save info. **/
 		if (NULL == (fid = fopen(filename, "w"))) {
 			printf("\a StoreInBin: cannot create %s file\n", filename);
 			nerr = -2;
 		} else {
+			if ( check_binheader (hdr) ) printf("StoreInBin: The header of %s is corrupted\n", filename);
 			fwrite (hdr, sizeof(t_ccheader), 1, fid);
 			fwrite (time, sizeof(time_t), Trset, fid);
+			fwrite (lag0, sizeof(float), Trset, fid); /* Turn on when all the codes using sac2bin.h are updated */
 			fwrite (data, sizeof(float), Trset*L, fid);
 			fclose (fid);
 		}
 	}
 	
 	free(hdr); 
+	free(lag0);
 	free(time); 
 	free(data);
 	
 	return nerr;
 }
 
-int StoreInManyBins (double **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderInfo *SacHeader1, 
+int StoreInManyBins (float **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderInfo *SacHeader1, 
 		t_HeaderInfo *SacHeader2, float dt, char *ccname) {
 	char filename[80];
 	unsigned int tr, *set, Trset;
 	int nerr=0;
 	t_HeaderInfo *hdr1, *hdr2;
+	
+	check_header (SacHeader1);
+	check_header (SacHeader2);
 	
 	set = (unsigned int *)calloc(Tr, sizeof(unsigned int));
 	if (set == NULL) nerr = -1;
@@ -537,8 +671,11 @@ int StoreInManyBins (double **y, unsigned int L, unsigned int Tr, int Lag1, t_He
 }
 
 int wrsac(char *filename, char *kinst, float beg, float dt, float *y, int nsamp, t_HeaderInfo *ptr1, t_HeaderInfo *ptr2) {
-	float dummy[nsamp];
+	float dummy[nsamp], lag0;
 	int nerr, lcalda=1;
+	
+	lag0 = difftime(ptr1->t, ptr2->t) + (double)(ptr1->msec - ptr2->msec)/1000 + (ptr1->b - ptr2->b);
+	// beg += lag0;
 	
 	newhdr();
 	setnhv ("npts",   &nsamp,       &nerr, strlen("npts"));
@@ -549,17 +686,17 @@ int wrsac(char *filename, char *kinst, float beg, float dt, float *y, int nsamp,
 		setfhv ("stlo",   &ptr2->stlo,  &nerr, strlen("stlo"));
 		setfhv ("stel",   &ptr2->stel,  &nerr, strlen("stel"));
 		setfhv ("stdp",   &ptr2->stdp,  &nerr, strlen("stdp"));
-		setkhv ("knetwk",  ptr2->net,   &nerr, strlen("knetwk"), strlen(ptr2->net));
-		setkhv ("kstnm",   ptr2->sta,   &nerr, strlen("kstnm"),  strlen(ptr2->sta));
-		setkhv ("khole",   ptr2->loc,   &nerr, strlen("khole"),  strlen(ptr2->loc));
-		setkhv ("kcmpnm",  ptr2->chn,   &nerr, strlen("kcmpnm"), strlen(ptr2->chn));
+		setkhv ("knetwk",  ptr2->net,   &nerr, strlen("knetwk"), (strlen(ptr2->net) < 8) ? strlen(ptr2->net) : 8 );
+		setkhv ("kstnm",   ptr2->sta,   &nerr, strlen("kstnm"),  (strlen(ptr2->sta) < 8) ? strlen(ptr2->sta) : 8 );
+		setkhv ("khole",   ptr2->loc,   &nerr, strlen("khole"),  (strlen(ptr2->loc) < 8) ? strlen(ptr2->loc) : 8 );
+		setkhv ("kcmpnm",  ptr2->chn,   &nerr, strlen("kcmpnm"), (strlen(ptr2->chn) < 8) ? strlen(ptr2->chn) : 8 );
 		
 		setfhv ("evla",   &ptr1->stla,  &nerr, strlen("evla"));
 		setfhv ("evlo",   &ptr1->stlo,  &nerr, strlen("evlo"));
-		setkhv ("kuser0",  ptr1->net,   &nerr, strlen("kuser0"), strlen(ptr1->net));
-		setkhv ("kevnm",   ptr1->sta,   &nerr, strlen("kevnm"),  strlen(ptr1->sta));
-		setkhv ("kuser1",  ptr1->loc,   &nerr, strlen("kuser1"), strlen(ptr1->loc));
-		setkhv ("kuser2",  ptr1->chn,   &nerr, strlen("kuser2"), strlen(ptr1->chn));
+		setkhv ("kuser0",  ptr1->net,   &nerr, strlen("kuser0"), (strlen(ptr1->net) < 8) ? strlen(ptr1->net) : 8 );
+		setkhv ("kevnm",   ptr1->sta,   &nerr, strlen("kevnm"),  (strlen(ptr1->sta) < 8) ? strlen(ptr1->sta) : 8 );
+		setkhv ("kuser1",  ptr1->loc,   &nerr, strlen("kuser1"), (strlen(ptr1->loc) < 8) ? strlen(ptr1->loc) : 8 );
+		setkhv ("kuser2",  ptr1->chn,   &nerr, strlen("kuser2"), (strlen(ptr1->chn) < 8) ? strlen(ptr1->chn) : 8 );
 	}
 	setlhv ("lcalda", &lcalda,      &nerr, strlen("lcalda"));
 	setnhv ("nzyear", &ptr1->year,  &nerr, strlen("nzyear"));
@@ -569,28 +706,33 @@ int wrsac(char *filename, char *kinst, float beg, float dt, float *y, int nsamp,
 	setnhv ("nzsec",  &ptr1->sec,   &nerr, strlen("nzsec"));
 	setnhv ("nzmsec", &ptr1->msec,  &nerr, strlen("nzmsec"));
 	setfhv ("b",     &beg,   &nerr, strlen("b"));
+	setfhv ("o",     &lag0,  &nerr, strlen("o"));
+	setkhv ("ko", "0LagTime", &nerr, strlen("ko"), 8);
 	setihv ("iztype", "io",  &nerr, strlen("iztype"), strlen("io"));
 	
 	wsac0(filename, dummy, y, &nerr, strlen(filename));
 	if (nerr) printf("wrsac: Error writing %s file\n", filename);
+	
+	// printf("%4d:%03d msec1 = %d msec2 = %d delay = %f s\n", ptr1->year, ptr1->yday, ptr1->msec, ptr2->msec, lag0);
+	
 	return nerr;
 }
 
-void clipping (double *x, unsigned int N) {
+void clipping (float *x, unsigned int N) {
 	float fa1, fa2;
 	unsigned int n;
 	
 	fa1 = 4*qabsmedian(x, N) / 0.6745;
 	for (n=0; n<N; n++) {
-		fa2 = (float)x[n];
+		fa2 = x[n];
 		if (fabsf(fa2) > fa1) 
-			x[n] = (double)((fa2 > fa1) ? fa1 : -fa1);
+			x[n] = (fa2 > fa1) ? fa1 : -fa1;
 	}
 }
 
-int RemoveOutlierTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0, float *std, float nstd) {
+int RemoveOutlierTraces (float **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0, float *std, float nstd) {
 	unsigned int tr, Tr=*Tr0;
-	double **x = *xOut;
+	float **x = *xOut;
 	float fa1;
 	t_HeaderInfo *phd = *SacHeader;
 	
@@ -621,18 +763,19 @@ int RemoveOutlierTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned in
 	return 0;
 }
 
-/* Note that ms are ignored. */
+/* Note that considers ms but works at seconds precision. */
 int swap_t_elem(const void *x1, const void *x2) {
 	t_elem *t1 = (t_elem *)x1, *t2 = (t_elem *)x2;
 	
-	return (int)difftime(t1->time, t2->time);
+	return (int)(difftime(t1->time, t2->time) + (double)(t1->msec - t2->msec)/1000);
 }
 
-int SortTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0) {
+int SortTraces (float **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0) {
 	unsigned int Tr=*Tr0, st, ST, *ind;
 	int nerr=0;
-	double **x = *xOut, **x_copy;
+	float **x = *xOut, **x_copy;
 	t_HeaderInfo *hdr = *SacHeader, *hdr_copy;
+	
 	t_elem *elem;
 	
 	if (xOut == NULL || SacHeader == NULL || Tr0 == NULL) {
@@ -650,6 +793,7 @@ int SortTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0) {
 	for (st=0; st<ST; st++) {
 		elem[st].ind  = st;
 		elem[st].time = hdr[st].t;
+		elem[st].msec = hdr[st].msec;
 	}
 	qsort(elem, ST, sizeof(t_elem), swap_t_elem);
 	
@@ -664,12 +808,12 @@ int SortTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0) {
 	free(elem);
 	
 	hdr_copy = (t_HeaderInfo *)malloc(Tr*sizeof(t_HeaderInfo));
-	x_copy = (double **)malloc(Tr*sizeof(double *));
+	x_copy = (float **)malloc(Tr*sizeof(float *));
 	if (hdr_copy == NULL && x_copy == NULL) { 
 		puts("SortTraces: Out of memory.");
 		nerr = 2;
 	} else {
-		memcpy(x_copy,   x,   Tr*sizeof(double *));
+		memcpy(x_copy,   x,   Tr*sizeof(float *));
 		memcpy(hdr_copy, hdr, Tr*sizeof(t_HeaderInfo));
 		for (st=0; st<ST; st++) {
 			x[st] = x_copy[ind[st]];
@@ -684,12 +828,12 @@ int SortTraces (double **xOut[], t_HeaderInfo *SacHeader[], unsigned int *Tr0) {
 	return nerr;
 }
 
-int MakePairedLists (double **xOut1[], t_HeaderInfo *SacHeader1[], unsigned int *TrOut1, 
-                 double **xOut2[], t_HeaderInfo *SacHeader2[], unsigned int *TrOut2) {
+int MakePairedLists (float **xOut1[], t_HeaderInfo *SacHeader1[], unsigned int *TrOut1, 
+                 float **xOut2[], t_HeaderInfo *SacHeader2[], unsigned int *TrOut2) {
 	unsigned int tr1, tr2, Tr1=*TrOut1, Tr2=*TrOut2, TrOut, st1, st2, ST1, ST2, nskip1, nskip2;
-	double **x1 = *xOut1, **x2 = *xOut2;
+	float **x1 = *xOut1, **x2 = *xOut2;
 	t_HeaderInfo *hdr1 = *SacHeader1, *hdr2 = *SacHeader2;
-	time_t td;
+	double td;
 	
 	if (xOut1 == NULL || SacHeader1 == NULL || TrOut1 == NULL || xOut2 == NULL || SacHeader2 == NULL || TrOut2 == NULL) {
 		puts("MakePairedLists: One required variable is NULL.");
@@ -700,8 +844,9 @@ int MakePairedLists (double **xOut1[], t_HeaderInfo *SacHeader1[], unsigned int 
 	ST1 = Tr1;
 	ST2 = Tr2;
 	nskip1 = 0; nskip2 = 0;
-	while (st1 < ST1 && st2 < ST2) {
-		td = difftime(hdr1[st1].t, hdr2[st2].t);
+		while (st1 < ST1 && st2 < ST2) {
+		td  = difftime(hdr1[st1].t, hdr2[st2].t);
+		td += (double)(hdr1[st1].msec - hdr2[st2].msec)/1000;
 		if (fabs(td) < 0.5) {   /* Keep the elements on both lists. */
 			if (nskip1) {
 				memcpy (&hdr1[st1-nskip1], &hdr1[st1], sizeof(t_HeaderInfo));
@@ -712,12 +857,12 @@ int MakePairedLists (double **xOut1[], t_HeaderInfo *SacHeader1[], unsigned int 
 				x2[st2-nskip2] = x2[st2];
 			}
 			st1++; st2++;
-		} else if (td < 0) { /* Remove element from list 1. */ 
+		} else if (td < 0) { /* Remove element from list 1 if td < -0.5 */ 
 			fftw_free(x1[st1]); 
 			x1[st1] = NULL; 
 			nskip1++; 
 			st1++; 
-		} else if (td > 0) { /* Remove element from list 2. */ 
+		} else if (td > 0) { /* Remove element from list 2 if td >  0.5 */ 
 			fftw_free(x2[st2]); 
 			x2[st2] = NULL; 
 			nskip2++; 
@@ -735,9 +880,10 @@ int MakePairedLists (double **xOut1[], t_HeaderInfo *SacHeader1[], unsigned int 
 	return 0;
 }
 
-int AveWhite (double **x0, unsigned int N, unsigned int Tr, double freq[2], double dt) {
+int AveWhite (float **x0, unsigned int N, unsigned int Tr, double freq[2], double dt) {
 	fftw_plan pxX, pXx;
 	double *x, *H, *HS, da1, mn, mx, win[11];
+	float *pf1;
 	fftw_complex *X;
 	unsigned int Nz, Nh, tr, m, M, n, n1, n2;
 	int nerr;
@@ -751,11 +897,15 @@ int AveWhite (double **x0, unsigned int N, unsigned int Tr, double freq[2], doub
 	if (x == NULL || H == NULL || HS == NULL || X == NULL)
 		nerr = -1;
 	else {
-		pxX  = fftw_plan_dft_r2c_1d(Nz, x, X, FFTW_ESTIMATE); /* FFT plan  */
+		// fftw_init_threads();
+		// fftw_plan_with_nthreads(omp_get_max_threads());
+		
+		pxX  = fftw_plan_dft_r2c_1d(Nz, x, X, FFTW_ESTIMATE); /* The FFT plan  */
 		
 		/** Average absolute spectrum **/
 		for (tr=0; tr<Tr; tr++) {
-			memcpy(x, x0[tr], N*sizeof(double));
+			pf1 = x0[tr];
+			for (n=0; n<N;  n++) x[n] = (double)pf1[n];
 			for (n=N; n<Nz; n++) x[n] = 0;
 			fftw_execute(pxX);
 			
@@ -810,15 +960,20 @@ int AveWhite (double **x0, unsigned int N, unsigned int Tr, double freq[2], doub
 		}
 		
 		/** Do the whitening **/
-		pXx = fftw_plan_dft_c2r_1d(Nz, X, x, FFTW_ESTIMATE); /* IFFT plan */
+		pXx = fftw_plan_dft_c2r_1d(Nz, X, x, FFTW_ESTIMATE); /* The IFFT plan */
 		for (tr=0; tr<Tr; tr++) {
-			memcpy(x, x0[tr], N*sizeof(double));
+			pf1 = x0[tr];
+			for (n=0; n<N;  n++) x[n] = (double)pf1[n];
 			for (n=N; n<Nz; n++) x[n] = 0;
 			fftw_execute(pxX);
 			for (n=0; n<Nh; n++) X[n] *= HS[n];
 			fftw_execute(pXx);
-			memcpy(x0[tr], x, N*sizeof(double));
+			for (n=0; n<N; n++) pf1[n] = (float)x[n];
 		}
+		// fftw_cleanup_threads();
+		
+		fftw_destroy_plan(pxX);
+		fftw_destroy_plan(pXx);
 	}
 	
 	fftw_free(X);
@@ -828,13 +983,13 @@ int AveWhite (double **x0, unsigned int N, unsigned int Tr, double freq[2], doub
 	return nerr;
 }
 
-float qabsmedian(double input[], int n) {
+float qabsmedian(float input[], int n) {
 	register int i,j,l,m;
 	register float x, t, out, *a;
 	int k = n/2;
 	
 	if (NULL == (a = (float *)malloc(n * sizeof(float)) )) return 0;
-	for (i=0; i<n; i++) a[i] = (float)fabs(input[i]);
+	for (i=0; i<n; i++) a[i] = fabsf(input[i]);
 	
 	l = 0; m = n-1;
 	while (l <m) {

@@ -30,24 +30,24 @@ typedef struct {
 } t_HeaderInfo;
 
 typedef struct {
-	char     FormatID[8];  /* FormatID: MSACS1                          */
+	char     FormatID[8];   /* FormatID: MSACS1                         */
 	int32_t  nseq;          /* Number of sequences in the file.         */
 	int32_t  npts;          /* Length of the sequences (0 if different) */
-	int32_t  SingleChannel; /* 0 (different) / 1 (channels) channels    */ 
+	int32_t  SingleChannel; /* 0 (different) / 1 (equal) channels    */ 
 } t_HeaderManySacsBinary;
 
-double **Destroy_DoubleArrayList (double **x, unsigned int Tr);
-double **Create_DoubleArrayList (unsigned int N, unsigned int Tr);
+float **Destroy_FloatArrayList (float **x, unsigned int Tr);
+float **Create_FloatArrayList (unsigned int N, unsigned int Tr);
 int ReadLocation (double *stlat, double *stlon, char *fin);
-int ReadManySacs (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin);
-int ReadManySacs_WithDiffLength (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, char *fin);
+int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin);
+int ReadManySacs_WithDiffLength (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, char *fin);
 void DestroyFilelist (char *p[]);
 int CreateFilelist (char **filename[], unsigned int *Tr, char *filelist);
 
-int RemoveZeroTraces (double **x[], t_HeaderInfo *SacHeader[], unsigned int *Tr, unsigned int N);
+int RemoveZeroTraces (float **x[], t_HeaderInfo *SacHeader[], unsigned int *Tr, unsigned int N);
 
-int Read_ManySacsFile (double **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin);
-int Write_ManySacsFile (double *x[], t_HeaderInfo *SacHeader, unsigned int Tr, unsigned int N, char *fout);
+int Read_ManySacsFile (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin);
+int Write_ManySacsFile (float *x[], t_HeaderInfo *SacHeader, unsigned int Tr, unsigned int N, char *fout);
 int ReadLocation_ManySacsFile (double *stlat, double *stlon, char *fin);
 
 #endif
