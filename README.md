@@ -7,7 +7,7 @@ Software to compute interstation correlations, including fast implementations of
 geometrically-normalized (CCGN), 1-bit correlation (1-bit CCGN), and phase cross-correlations (PCC)
 with and without using the GPU ([Ventosa et al., SRL 2019](https://doi.org/10.1785/0220190022)).
 
-The software packages of Fast phase cross-correlation and [ts-PWS](https://github.com/sergiventosa/ts-PWS) 
+The software packages of fast phase cross-correlation and [ts-PWS](https://github.com/sergiventosa/ts-PWS) 
 stacking are basic building blocks in the design of efficient signal extraction methods 
 from interstation correlations.
 
@@ -15,7 +15,7 @@ Main features
 -------------
 Computes 3 types of correlations:
 
- * The Standard (geometrically) normalized cross-correlations (GNCC).
+ * The standard (geometrically) normalized cross-correlations (GNCC).
  * The 1-bit amplitude normalization followed by the GNCC (1-bit GNCC).
  * The phase cross-correlation (PCC).
 
