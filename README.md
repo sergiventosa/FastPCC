@@ -3,17 +3,24 @@ Fast phase cross-correlation
 
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 
-Software to compute interstation correlations, including fast implementations of the 
-phase cross-correlation with and without using the GPU ([Ventosa et al., SRL 2019](https://doi.org/10.1785/0220190022))
+Software to compute interstation correlations, including fast implementations of 
+geometrically-normalized (CCGN), 1-bit correlation (1-bit CCGN), and phase cross-correlations (PCC)
+with and without using the GPU ([Ventosa et al., SRL 2019](https://doi.org/10.1785/0220190022)).
+
+The software packages of Fast phase cross-correlation and [ts-PWS](https://github.com/sergiventosa/ts-PWS) 
+stacking are basic building blocks in the design of efficient signal extraction methods 
+from interstation correlations.
 
 Main features
 -------------
 Computes 3 types of correlations:
+
  * The Standard (geometrically) normalized cross-correlations (GNCC).
  * The 1-bit amplitude normalization followed by the GNCC (1-bit GNCC).
  * The phase cross-correlation (PCC).
 
 The computations of PCC are accerated in several ways:
+
  * PCC is parallelized in the CPU using OpenMP 3.1 and in the GPU using CUDA (two independent codes).
  * The computational cost of PCC with power of 2 is reduced to about twice the one of 1-bit GNCC.
 
@@ -66,6 +73,6 @@ Journal International, 184(1), 494-506, doi:[10.1111/j.1365-246X.2010.04861.x](h
 Paper to be cited
 -----------------
 Ventosa S., Schimmel M. & E. Stutzmann, 2019. Towards the processing of large data 
-volumes with phase cross-correlation, Seismological Research Letters, doi:[10.1785/0220190022](https://doi.org/10.1785/0220190022)
+volumes with phase cross-correlation, Seismological Research Letters, 90(4), 1663-1669, doi:[10.1785/0220190022](https://doi.org/10.1785/0220190022)
 
-2019/05/23 Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)
+2020/10/01 Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)
