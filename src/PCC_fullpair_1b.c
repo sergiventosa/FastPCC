@@ -17,7 +17,7 @@
 /*  - Compute CCGN using fftw3.                                              */
 /*  - Clipping.                                                              */
 /*****************************************************************************/
-/* Temporal: Save loc '' of Geoscope (G) stations as '00'                    */
+/* Temporal: Save loc '' of Geoscope (G) stations as '00'                    */ 
 /*****************************************************************************/
 /* **** 2020 ****                                                            */
 /* Jun25 (1b) A few minor updates.                                           */
@@ -32,6 +32,11 @@
 /*     must be done in advance).                                             */
 /*   - Modified the format of the output binary file (msacs) to save the     */
 /*     actual "zero" lag time for each correlation pair.                     */
+/* **** 2021 ****                                                            */
+/* Jan21 (1b) Bug correction                                                 */
+/*   - Station 1 is the virtual source and station 2 the virtual receiver    */
+/*     (event and station in the sac header, respectively), but computations */
+/*     were done using the opposite criterion.                               */
 /*****************************************************************************/
 
 
@@ -341,9 +346,9 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 			CorrectRevesedPolarity (x1, N, Tr, SacHeader1); /* Corrects for sign-flips on a component. */
 			CorrectRevesedPolarity (x2, N, Tr, SacHeader2);
 			if (fpcc->pcc) {  /* PCCs: */
-				if (fpcc->v==2)      pcc2_set (y, x1, x2, N, Tr, Lag1, Lag2);
-				else if (fpcc->v==1) pcc1_set (y, x1, x2, N, Tr, Lag1, Lag2);
-				else pcc_set (y, x1, x2, N, Tr, fpcc->v, Lag1, Lag2);
+				if (fpcc->v==2)      pcc2_set (y, x2, x1, N, Tr, Lag1, Lag2);
+				else if (fpcc->v==1) pcc1_set (y, x2, x1, N, Tr, Lag1, Lag2);
+				else pcc_set (y, x2, x1, N, Tr, fpcc->v, Lag1, Lag2);
 				if (fpcc->oformat==1) 
 					StoreInManySacs (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, nickpcc);
 				else if (fpcc->oformat==2) 
@@ -351,7 +356,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 			}
 			
 			if (fpcc->ccgn) {  /* GNCCs */
-				ccgn_set (y, x1, x2, N, Tr, Lag1, Lag2);
+				ccgn_set (y, x2, x1, N, Tr, Lag1, Lag2);
 				if (fpcc->oformat==1) 
 					StoreInManySacs (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "ccgn");
 				else if (fpcc->oformat==2) 
@@ -359,7 +364,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 			}
 			
 			if (fpcc->cc1b) {  /* 1-bit + GNCCs */
-				cc1b_set (y, x1, x2, N, Tr, Lag1, Lag2);
+				cc1b_set (y, x2, x1, N, Tr, Lag1, Lag2);
 				if (fpcc->oformat==1) 
 					StoreInManySacs (y, L, Tr, Lag1, SacHeader1, SacHeader2, dt, "cc1b");
 				else if (fpcc->oformat==2) 
@@ -385,7 +390,7 @@ void infooo() {
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2017. Extracting surface waves, hum and normal modes: Time-scale phase-weighted stack and beyond, Geophysical Journal International, 211(1), 30-44, doi:10.1093/gji/ggx284");
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2019. Towards the processing of large data volumes with phase cross-correlation, Seismological Research Letters, 90(4), 1663-1669, doi:10.1785/0220190022"); 
 	puts("AUTHOR: Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)");
-	puts("Last modification: 01/10/2020\n");
+	puts("Last modification: 22/01/2021\n");
 }
 
 void usage() {
@@ -442,8 +447,8 @@ void usage() {
 	puts("     Filelist2msacs filelist2.txt sta2.msacs");
 	puts("     PCC_fullpair_1b sta1.msacs sta2.msacs imsacs tl1=-1000 tl2=1000 cc1b pcc v=2");
 	puts("");
-	puts("AUTHOR: Sergi Ventosa, 10/01/2020");
-	puts("Version 1.0.2");
+	puts("AUTHOR: Sergi Ventosa, 21/01/2021");
+	puts("Version 1.0.3");
 	puts("Please, do not hesitate to send bugs, comments or improvements to sergiventosa(at)hotmail.com\n");
 }
 
@@ -612,7 +617,7 @@ int StoreInBin (float **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderIn
 	
 	free(hdr); 
 	free(lag0);
-	free(time); 
+	free(time);
 	free(data);
 	
 	return nerr;
@@ -708,7 +713,7 @@ int wrsac(char *filename, char *kinst, float beg, float dt, float *y, int nsamp,
 	setfhv ("b",     &beg,   &nerr, strlen("b"));
 	setfhv ("o",     &lag0,  &nerr, strlen("o"));
 	setkhv ("ko", "0LagTime", &nerr, strlen("ko"), 8);
-	setihv ("iztype", "io",  &nerr, strlen("iztype"), strlen("io"));
+	setihv ("iztype", "io", &nerr, strlen("iztype"), strlen("io"));
 	
 	wsac0(filename, dummy, y, &nerr, strlen(filename));
 	if (nerr) printf("wrsac: Error writing %s file\n", filename);
