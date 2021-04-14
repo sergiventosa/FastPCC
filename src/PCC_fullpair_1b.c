@@ -37,6 +37,7 @@
 /*   - Station 1 is the virtual source and station 2 the virtual receiver    */
 /*     (event and station in the sac header, respectively), but computations */
 /*     were done using the opposite criterion.                               */
+/* Abr14 (1b) Minor update to compile with SAC v102.0                        */
 /*****************************************************************************/
 
 
@@ -47,6 +48,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/types.h>
 #include <ctype.h>
 #include <math.h>
 #include <time.h>
@@ -390,7 +392,7 @@ void infooo() {
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2017. Extracting surface waves, hum and normal modes: Time-scale phase-weighted stack and beyond, Geophysical Journal International, 211(1), 30-44, doi:10.1093/gji/ggx284");
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2019. Towards the processing of large data volumes with phase cross-correlation, Seismological Research Letters, 90(4), 1663-1669, doi:10.1785/0220190022"); 
 	puts("AUTHOR: Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)");
-	puts("Last modification: 22/01/2021\n");
+	puts("Last modification: 14/04/2021\n");
 }
 
 void usage() {
@@ -447,8 +449,8 @@ void usage() {
 	puts("     Filelist2msacs filelist2.txt sta2.msacs");
 	puts("     PCC_fullpair_1b sta1.msacs sta2.msacs imsacs tl1=-1000 tl2=1000 cc1b pcc v=2");
 	puts("");
-	puts("AUTHOR: Sergi Ventosa, 21/01/2021");
-	puts("Version 1.0.3");
+	puts("AUTHOR: Sergi Ventosa, 14/04/2021");
+	puts("Version 1.0.4");
 	puts("Please, do not hesitate to send bugs, comments or improvements to sergiventosa(at)hotmail.com\n");
 }
 

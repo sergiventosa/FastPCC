@@ -13,6 +13,7 @@
 #include <fftw3.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
 #include <time.h>
 #include <sacio.h>
 #include <string.h>
@@ -90,8 +91,10 @@ int nerr_print (char *filename, int nerr) {
 float **Destroy_FloatArrayList (float **x, unsigned int Tr) {
 	unsigned int tr;
 	
+	if (x != NULL) {
 	for (tr=0; tr<Tr; tr++) fftw_free(x[tr]);
 	free(x);
+	}
 	
 	return NULL;
 }
@@ -199,7 +202,7 @@ int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *Tr
 	for (tr=0; tr<Tr; tr++) {
 		filename = filenames[tr];
 		rsac1(filename, sig, &ia1, &beg, &dt, &Nmax, &nerr, strlen(filename));
-		sac_warning_off ();
+		// sac_warning_off (); // Not supported from v102.0
 		npts = (unsigned)ia1;
 		
 		phdr1 = &SacHeader[tr-nskip];
@@ -350,7 +353,7 @@ int ReadManySacs_WithDiffLength (float **xOut[], t_HeaderInfo *SacHeaderOut[], u
 		}
 		
 		rsac1(filename, sig, &npts, &beg, &dt, &Nmax, &nerr, strlen(filename));
-		sac_warning_off ();
+		// sac_warning_off (); // Not supported from v102.0
 		
 		phdr1 = &SacHeader[tr-nskip];
 		phdr1->b     = beg;
