@@ -185,6 +185,7 @@ int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *Tr
 	getfhv ("b",     &beg1,  &nerr, strlen("b"));     if (nerr) return nerr_print (filename, nerr);
 	
 	/* Allocate memory for the input traces */
+	Nmax = N;
 	if (NULL == (x = Create_FloatArrayList (N, Tr) )) nerr = 4;
 	if (NULL == (sig = (float *)calloc(N, sizeof(float)) )) nerr = 4;
 	if (nerr == 4) {

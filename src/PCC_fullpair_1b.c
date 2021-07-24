@@ -207,6 +207,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 		}
 	}
 	
+	N1 = fpcc->Nmax;
 	if (fpcc->iformat == 1)
 		nerr1 = ReadManySacs (&x1, &SacHeader1, &Tr1, &N1, &dt1, fpcc->fin1);
 	else if (fpcc->iformat == 2)
@@ -242,13 +243,13 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	}
 	if (nerr)  { printf("PCCfullpair_main: Something went wrong when reading the data from station 2! (nerr = %d)\n", nerr);  return nerr; }
 	
-	if (N1 != N) printf("PCCfullpair_main: Traces of these stations has different lengths: %u:%u\n", N1, N);
-	if (dt1 != dt) printf("PCCfullpair_main: Traces of these stations has different samplings: %f:%f\n", dt1, dt);
+	if (N1 != N) printf("PCCfullpair_main: These traces have different lengths: %u:%u\n", N1, N);
+	if (dt1 != dt) printf("PCCfullpair_main: Warnning: These stations have different samplings: %11.9f:%11.9f\n", dt1, dt);
 	
 	nerr = RemoveZeroTraces (&x1, &SacHeader1, &Tr1, N);
-	if (nerr) printf("PCCfullpair_main: Something went wrong when RemoveZeroTraces of station 1! (nerr = %d)\n", nerr);
+	if (nerr) { printf("PCCfullpair_main: Something went wrong when RemoveZeroTraces of station 1! (nerr = %d)\n", nerr); return nerr; }
 	nerr = RemoveZeroTraces (&x2, &SacHeader2, &Tr2, N);
-	if (nerr) printf("PCCfullpair_main: Something went wrong when RemoveZeroTraces of station 2! (nerr = %d)\n", nerr);
+	if (nerr) { printf("PCCfullpair_main: Something went wrong when RemoveZeroTraces of station 2! (nerr = %d)\n", nerr); return nerr; }
 	
 	/* Outliers and clippling for station 1 */
 	/* Data std. (The signal should have no mean). */
@@ -274,7 +275,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	/* Remove traces having much higher or lower energy than the others ones. */
 	if (fpcc->std) {
 		nerr = RemoveOutlierTraces (&x1, &SacHeader1, &Tr1, std, fpcc->std);
-		if (nerr) printf("PCCfullpair_main: Something went wrong when RemoveOutlierTraces of station 1! (nerr = %d)\n", nerr);
+		if (nerr) { printf("PCCfullpair_main: Something went wrong when RemoveOutlierTraces of station 1! (nerr = %d)\n", nerr); return nerr; }
 	}
 	
 	/* Outliers and clippling for station 2 */
@@ -300,7 +301,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	/* Remove traces having much higher or lower energy than the others ones. */
 	if (fpcc->std) {
 		nerr = RemoveOutlierTraces (&x2, &SacHeader2, &Tr2, std, fpcc->std);
-		if (nerr) printf("PCCfullpair_main: Something went wrong when RemoveOutlierTraces of station 2! (nerr = %d)\n", nerr);
+		if (nerr) { printf("PCCfullpair_main: Something went wrong when RemoveOutlierTraces of station 2! (nerr = %d)\n", nerr); return nerr; }
 		free(std);
 	}
 	
@@ -327,7 +328,10 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	else Lag2 = 0;
 	
 	if (Lag1 > Lag2) { ia1 = Lag1; Lag1 = Lag2; Lag2 = ia1; }
-	if (abs(Lag1) > N || abs(Lag2) > N) printf("PCCfullpair_main: Lags exceed the sequence length\n");
+	if (abs(Lag1) >= N || abs(Lag2) >= N) { 
+		printf("PCCfullpair_main: ERROR: TOO LARGE LAGS!!! The modulus of the Lags have to be lower than the sequence length.\n"); 
+		return 6; 
+	}
 	L = Lag2-Lag1+1;
 	
 	printf("Lag1 = %d, Lag2 = %d, L = %d, N = %d, Tr = %d, gcarc = %f\n", Lag1, Lag2, L, N, Tr, gcarc);
@@ -392,7 +396,7 @@ void infooo() {
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2017. Extracting surface waves, hum and normal modes: Time-scale phase-weighted stack and beyond, Geophysical Journal International, 211(1), 30-44, doi:10.1093/gji/ggx284");
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2019. Towards the processing of large data volumes with phase cross-correlation, Seismological Research Letters, 90(4), 1663-1669, doi:10.1785/0220190022"); 
 	puts("AUTHOR: Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)");
-	puts("Last modification: 14/04/2021\n");
+	puts("Last modification: 12/07/2021\n");
 }
 
 void usage() {
@@ -433,8 +437,8 @@ void usage() {
 	puts("Additional functionalities");
 	puts("  clip   : clip input sequences before the correlations at 4*MAD/0.6745, about 4 sigmas.");
 	puts("  std=   : remove sequences whose samples have a standard deviation n times higher than average.");
-	puts("  awhite=[f1 f2] : smooth spectral whittening in the frequency band f1 - f2 (f1 < f2) using a"); 
-	puts("                   Blackman window of 11 samples.");
+	puts("  awhite=f1,f2 : smooth spectral whittening in the frequency band f1 - f2 (f1 < f2) using a"); 
+	puts("                 Blackman window of 11 samples.");
 	puts("");
 	puts("EXAMPLES");
 	puts("  Computes PCC of power 1 and CCGN between the traces listed in filelist1.txt and filelist2.txt");
@@ -449,7 +453,7 @@ void usage() {
 	puts("     Filelist2msacs filelist2.txt sta2.msacs");
 	puts("     PCC_fullpair_1b sta1.msacs sta2.msacs imsacs tl1=-1000 tl2=1000 cc1b pcc v=2");
 	puts("");
-	puts("AUTHOR: Sergi Ventosa, 14/04/2021");
+	puts("AUTHOR: Sergi Ventosa, 12/07/2021");
 	puts("Version 1.0.4");
 	puts("Please, do not hesitate to send bugs, comments or improvements to sergiventosa(at)hotmail.com\n");
 }
@@ -564,20 +568,20 @@ int StoreInBin (float **y, unsigned int L, unsigned int Tr, int Lag1, t_HeaderIn
 		/** Header    **/
 		hdr1 = &SacHeader1[setin1[0]];
 		hdr2 = &SacHeader2[setin2[0]];
-		strncpy(hdr->method, ccmethod, 8);
+		memcpy(hdr->method, ccmethod, 8);
 		/* Info station 1. */
-		strncpy(hdr->net1, hdr1->net, 8);
-		strncpy(hdr->sta1, hdr1->sta, 8);
-		strncpy(hdr->loc1, hdr1->loc, 8);
-		strncpy(hdr->chn1, hdr1->chn, 8);
+		memcpy(hdr->net1, hdr1->net, 8);
+		memcpy(hdr->sta1, hdr1->sta, 8);
+		memcpy(hdr->loc1, hdr1->loc, 8);
+		memcpy(hdr->chn1, hdr1->chn, 8);
 		hdr->stlat1 = hdr1->stla;
 		hdr->stlon1 = hdr1->stlo;
 		hdr->stel1  = hdr1->stel;
 		/* Info station 2. */
-		strncpy(hdr->net2, hdr2->net, 8);
-		strncpy(hdr->sta2, hdr2->sta, 8);
-		strncpy(hdr->loc2, hdr2->loc, 8);
-		strncpy(hdr->chn2, hdr2->chn, 8);
+		memcpy(hdr->net2, hdr2->net, 8);
+		memcpy(hdr->sta2, hdr2->sta, 8);
+		memcpy(hdr->loc2, hdr2->loc, 8);
+		memcpy(hdr->chn2, hdr2->chn, 8);
 		hdr->stlat2 = hdr2->stla;
 		hdr->stlon2 = hdr2->stlo;
 		hdr->stel2  = hdr2->stel;
