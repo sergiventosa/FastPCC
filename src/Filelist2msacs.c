@@ -19,11 +19,11 @@ int main(int argc, char *argv[]) {
 	char *filelist, *outfile;
 	int Nmax = 0;
 	
-	if (argc < 2) usage();
+	if (argc < 3) usage();
 	else {
 		filelist = argv[1];
 		outfile  = argv[2];
-		if (argc > 2) {
+		if (argc > 3) {
 			if (!strncmp(argv[3], "Nmax=", 5)) {
 				if ( RDint(&Nmax, argv[3] + 5) ) {
 					puts("Error when reading Nmax.\n"); Nmax = 0; 
