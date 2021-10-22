@@ -493,6 +493,8 @@ int pcc1_set (float ** const y, float ** const x1, float ** const x2, const int 
 			
 			anok = (sem_t *)malloc(Tr*sizeof(sem_t));
 			for (tr=0; tr<Tr; tr++) sem_init(&anok[tr], 0, 0);
+			
+			omp_set_nested(1);
 			#pragma omp parallel sections
 			{
 				#pragma omp section
@@ -502,7 +504,6 @@ int pcc1_set (float ** const y, float ** const x1, float ** const x2, const int 
 						fftwf_plan pain, paout;
 						float *x;
 						float complex *xa;
-						unsigned int step;
 						
 						#pragma omp critical
 						{
@@ -513,8 +514,8 @@ int pcc1_set (float ** const y, float ** const x1, float ** const x2, const int 
 							paout = fftwf_plan_dft_1d(N, xa, xa, FFTW_BACKWARD, FFTW_ESTIMATE);
 						}
 						
-						step = omp_get_num_threads();
-						for (tr=omp_get_thread_num(); tr<Tr; tr+=step) {  /* First traces are processed first. */
+						#pragma omp for schedule(static,16)
+						for (tr=0; tr<Tr; tr++) {
 							memcpy(x, x1[tr], N*sizeof(float));
 							AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
 							memcpy(fxa1[tr], xa, N*sizeof(float complex));

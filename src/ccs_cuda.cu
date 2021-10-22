@@ -247,7 +247,8 @@ __global__ void PCC1_lowlevel2 (const float2 *x1, const float2 *x2, float *y, in
 		}
 		__syncthreads();
 	}
-	y[l] = fa5/(2*(N-abs(Lag1 + l)));
+	if (l >= l1 && l < L)
+		y[l] = fa5/(2*(N-abs(Lag1 + l)));
 }
 
 // Host code
@@ -315,14 +316,12 @@ int pcc1_highlevel_error (const char *str, cudaError_t cudaerr) {
 }
 
 #if 0
-// void pcc1_highlevel (double ** const y, float complex ** const x1, float complex ** const x2, const int N, const int Tr, const int Lag1, const int Lag2, sem_t *anok) {
-void pcc1_highlevel (double ** const y, _Complex float ** const x1, _Complex float ** const x2, const int N, const int Tr, const int Lag1, const int Lag2, sem_t *anok) {
+int pcc1_highlevel (float **y, _Complex float **x1, _Complex float **x2, int N, unsigned int Tr, int Lag1, int Lag2, sem_t *anok) {
 	float *h_y;
 	float2 *d_xan1, *d_xan2;
 	float *d_y;
-	int L=Lag2-Lag1+1;
 	size_t szx, szy;
-	unsigned int tr, l, l1;
+	unsigned int tr, l, l1, L=(unsigned)abs(Lag2-Lag1+1);
 	int threadsPerBlock = BLOCK_SIZE, blocksPerGrid;
 	
 	if (Lag2 > N) L -= (Lag2-N);
@@ -354,8 +353,6 @@ void pcc1_highlevel (double ** const y, _Complex float ** const x1, _Complex flo
 		
 		/* Copy result back */
 		cudaMemcpy(h_y, d_y, szy, cudaMemcpyDeviceToHost);
-		
-		/* Convert results to double */
 		for (l=l1; l<L; l++) y[tr][l] = h_y[l];
 	}
 	
@@ -363,9 +360,10 @@ void pcc1_highlevel (double ** const y, _Complex float ** const x1, _Complex flo
 	cudaFree(d_xan2);
 	cudaFree(d_y);
 	cudaFreeHost(h_y);
+	
+	return 0;
 }
 #else
-// void pcc1_highlevel (double ** const y, float complex ** const x1, float complex ** const x2, const int N, const int Tr, const int Lag1, const int Lag2, sem_t *anok) {
 int pcc1_highlevel (float **y, _Complex float **x1, _Complex float **x2, int N, unsigned int Tr, int Lag1, int Lag2, sem_t *anok) {
 	float *h_y;
 	float2 *d_xan1, *d_xan2;
@@ -390,7 +388,7 @@ int pcc1_highlevel (float **y, _Complex float **x1, _Complex float **x2, int N, 
 	
 	/* Allocate vectors in device & host memories */
 	cudaerr = cudaMallocHost(&h_y, Tr*szy);
-	if (cudaerr != cudaSuccess) return pcc1_highlevel_error("Error allocating pinned host memory h_y", cudaerr);
+		if (cudaerr != cudaSuccess) return pcc1_highlevel_error("Error allocating pinned host memory h_y", cudaerr);
 	cudaMalloc(&d_xan1, 16*szx);
 	cudaMalloc(&d_xan2, 16*szx);
 	cudaMalloc(&d_y,    16*szy);
@@ -398,19 +396,15 @@ int pcc1_highlevel (float **y, _Complex float **x1, _Complex float **x2, int N, 
 	blocksPerGrid1 = (N + threadsPerBlock - 1) / threadsPerBlock;
 	blocksPerGrid2 = (L-l1 + threadsPerBlock - 1) / threadsPerBlock;
 	for (m=0; m<16; m++) cudaStreamCreate(&stream[m]);
-	// for (m=0; m<16; m++) cudaStreamCreateWithFlags(&stream[m], cudaStreamNonBlocking);
 	for (n=0; n<((unsigned)Tr+15)/16; n++) {
 		for (m=0; m<16; m++) {
 			tr = 16*n+m;
 			if (tr < (unsigned)Tr) {
 				sem_wait(&anok[tr]);
 				
-				cudaMemcpy(d_xan1 + m*N, (float *)x1[tr], szx, cudaMemcpyHostToDevice);
-				cudaMemcpy(d_xan2 + m*N, (float *)x2[tr], szx, cudaMemcpyHostToDevice);
-				
-				// Note: Modify code to move x1 & x2 to page-locked host memory.
-				// cudaMemcpyAsync(d_xan1 + m*N, (float *)x1[tr], szx, cudaMemcpyHostToDevice, stream[m]);
-				// cudaMemcpyAsync(d_xan2 + m*N, (float *)x2[tr], szx, cudaMemcpyHostToDevice, stream[m]);
+				// Copy data to the GPU memory
+				cudaMemcpyAsync(d_xan1 + m*N, (float *)x1[tr], szx, cudaMemcpyHostToDevice, stream[m]);
+				cudaMemcpyAsync(d_xan2 + m*N, (float *)x2[tr], szx, cudaMemcpyHostToDevice, stream[m]);
 				
 				// Invoke the kernel GPU_AmpNormf
 				GPU_AmpNormf<<<blocksPerGrid1, threadsPerBlock, 0, stream[m]>>>(d_xan1 + m*N, N, 0);
@@ -440,17 +434,16 @@ int pcc1_highlevel (float **y, _Complex float **x1, _Complex float **x2, int N, 
 }
 #endif
 
-// void pcc1_highlevel2 (double ** const y, double ** const x1, double ** const x2, const int N, const int Tr, const int Lag1, const int Lag2) {
-void pcc1_highlevel2 (double **y, double **x1, double **x2, int N, unsigned int Tr, int Lag1, int Lag2) {
+void pcc1_highlevel2 (float **y, float **x1, float **x2, int N, unsigned int Tr, int Lag1, int Lag2) {
 	cufftHandle pin, pout;
 	cufftReal *d_x=NULL;
-	float *h_x;
-	float *h_y;
+	float *h_x, *h_y, *d_y, *mem;
 	float2 *d_xan1, *d_xan2;
-	float *d_y;
 	size_t szxr, szxc, szy;
-	unsigned int n, tr, l, l1, L=(unsigned)abs(Lag2-Lag1+1);
+	unsigned int tr, l, l1, L=(unsigned)abs(Lag2-Lag1+1);
 	int threadsPerBlock = BLOCK_SIZE, blocksPerGrid;
+	
+	blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
 	
 	if (Lag2 > N) L -= (Lag2-N);
 	l1 = (Lag1 >= -N) ? 0 : -(Lag1+N);
@@ -468,25 +461,24 @@ void pcc1_highlevel2 (double **y, double **x1, double **x2, int N, unsigned int 
 	cudaMalloc(&d_xan1, szxc);
 	cudaMalloc(&d_xan2, szxc);
 	cudaMalloc(&d_y,    szy);
+	cudaMalloc(&mem, blocksPerGrid*sizeof(float));
 	
 	/* Make the plans */
 	if (cufftPlan1d(&pin,  N, CUFFT_R2C, 1) != CUFFT_SUCCESS) { fprintf(stderr, "CUFFPlan1d failed\n"); return; }
 	if (cufftPlan1d(&pout, N, CUFFT_C2C, 1) != CUFFT_SUCCESS) { fprintf(stderr, "CUFFPlan1d failed\n"); return; }
 	
 	for (tr=0; tr<Tr; tr++) {
-		blocksPerGrid = (N + threadsPerBlock - 1) / threadsPerBlock;
-		
-		for (n=0; n<(unsigned)N; n++) h_x[n] = x1[tr][n];
+		memcpy(h_x, x1[tr], N*sizeof(float));
 		cudaMemcpy(d_x, h_x, szxr, cudaMemcpyHostToDevice);
 		GPU_AnalyticSignal ((cufftComplex *)d_xan1, d_x, N, &pin, &pout);
 		
-		for (n=0; n<(unsigned)N; n++) h_x[n] = x2[tr][n];
+		memcpy(h_x, x2[tr], N*sizeof(float));
 		cudaMemcpy(d_x, h_x, szxr, cudaMemcpyHostToDevice);
 		GPU_AnalyticSignal ((cufftComplex *)d_xan2, d_x, N, &pin, &pout);
 		
 		// Invoke the kernel GPU_AmpNormf
-		cuda_AmpNormf(d_xan1, N);
-		cuda_AmpNormf(d_xan2, N);
+		cuda_AmpNormf2(d_xan1, N, mem, NULL);
+		cuda_AmpNormf2(d_xan2, N, mem, NULL);
 		
 		// Invoke the kernel PCC1_lowlevel
 		blocksPerGrid = (L-l1 + threadsPerBlock - 1) / threadsPerBlock;
@@ -494,8 +486,6 @@ void pcc1_highlevel2 (double **y, double **x1, double **x2, int N, unsigned int 
 		
 		/* Copy result back */
 		cudaMemcpy(h_y, d_y, szy, cudaMemcpyDeviceToHost);
-		
-		/* Convert results to double */
 		for (l=l1; l<L; l++) y[tr][l] = h_y[l];
 	}
 	
