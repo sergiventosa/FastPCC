@@ -6,6 +6,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <semaphore.h>
+#include "wavelet_v7.h"
+#include "cdotx.h"
+
 
 //#define CUDAON
 #ifdef CUDAON
@@ -335,13 +338,13 @@ void pccf_lowlevel (float * const y, float complex * const xan1, float complex *
 void cc_lowlevel (double * const y, fftw_complex * const x1, fftw_complex * const x2, const int Nz, const int Lag1, const int Lag2, 
 		fftw_plan *pout, double *out, fftw_complex *fout) {
 	double da1 = 1./(double)Nz;
-	unsigned int n, L, Nh = Nz/2 + 1;
-	int lag;
+	unsigned int L, Nh = Nz/2 + 1;
+	int n, lag;
 	
 	L = abs(Lag2-Lag1)+1;
 	lag = (Lag2 >= Lag1) ? Lag1 : Lag2;
 	
-	for (n=0; n<Nh; n++) fout[n] = x1[n]*conj(x2[n]); /* the product        */
+	for (n=0; n<Nh; n++) fout[n] = conj(x1[n])*x2[n]; /* the product        */
 	fftw_execute(*pout);                               /* IFFT of the result */
 	
 	/* Copy the lag of interest and normalize */
@@ -352,13 +355,13 @@ void cc_lowlevel (double * const y, fftw_complex * const x1, fftw_complex * cons
 void ccf_lowlevel (float * const y, fftwf_complex * const x1, fftwf_complex * const x2, const int Nz, const int Lag1, const int Lag2, 
 		fftwf_plan *pout, float *out, fftwf_complex *fout) {
 	double da1 = 1./(double)Nz;
-	unsigned int n, L, Nh = Nz/2 + 1;
-	int lag;
+	unsigned int L, Nh = Nz/2 + 1;
+	int n, lag;
 	
 	L = abs(Lag2-Lag1)+1;
 	lag = (Lag2 >= Lag1) ? Lag1 : Lag2;
 	
-	for (n=0; n<Nh; n++) fout[n] = x1[n]*conjf(x2[n]); /* the product        */
+	for (n=0; n<Nh; n++) fout[n] = conjf(x1[n])*x2[n]; /* the product        */
 	fftwf_execute(*pout);                               /* IFFT of the result */
 	
 	/* Copy the lag of interest and normalize */
@@ -369,7 +372,6 @@ void ccf_lowlevel (float * const y, fftwf_complex * const x1, fftwf_complex * co
 void gn_lowlevel (double * const y, double * const x1, double * const x2, double norm1, double norm2, 
 		unsigned int N, unsigned int L, int lag) {
 	unsigned int n, n11=0, n21=0, n12=N, n22=N;
-	double da1 = 1./sqrt(norm1 * norm2);
 	
 	if (lag > 0) { 
 		n21  = (unsigned)lag;
@@ -380,21 +382,20 @@ void gn_lowlevel (double * const y, double * const x1, double * const x2, double
 	}
 	
 	for (n=0; n<L-1 && n22<N; n++) {
-		y[n] *= da1;
+		y[n] /= sqrt(norm1 * norm2);
 		n11--;
 		norm1 += x1[n11]*x1[n11];
 		norm2 += x2[n22]*x2[n22];
 		n22++;
 	}
 	for (  ; n<L-1; n++) {
-		y[n] *= da1;
+		y[n] /= sqrt(norm1 * norm2);
 		n12--;
 		norm1 -= x1[n12]*x1[n12];
 		norm2 -= x2[n21]*x2[n21];
 		n21++;
 	}
-	y[n] *= da1;
-	
+	y[n] /= sqrt(norm1 * norm2);
 }
 
 void gnf_lowlevel (float * const y, float * const x1, float * const x2, double norm1, double norm2, 
@@ -427,6 +428,7 @@ void gnf_lowlevel (float * const y, float * const x1, float * const x2, double n
 	
 }
 
+#if 0
 int pcc_set (float ** const y, float ** const x1, float ** const x2, const int N, const unsigned int Tr, const double v, const int Lag1, const int Lag2) {
 	double complex *x1an, *x2an;
 	double *xd, *yd;
@@ -458,7 +460,7 @@ int pcc_set (float ** const y, float ** const x1, float ** const x2, const int N
 			memset(y[tr], 0, L*sizeof(double));
 		
 			/* The actual PCC computation */
-			pcc_lowlevel (yd, x1an, x2an, N, v, Lag1, Lag2);
+			pcc_lowlevel (yd, x2an, x1an, N, v, Lag1, Lag2);
 			D2F_vec(y[tr], yd, L);
 		}
 	}
@@ -469,6 +471,142 @@ int pcc_set (float ** const y, float ** const x1, float ** const x2, const int N
 	free(xd);
 	return nerr;
 }
+#else
+int pcc_set (float ** const y, float ** const x1, float ** const x2, const int N, const unsigned int Tr, const double v, const int Lag1, const int Lag2) {
+	int L=Lag2-Lag1+1, nerr = 0, OnTheCPU;
+	
+	if (Lag1 > N || Lag2 < -N) return 0;
+	if (x1 == NULL || x2 == NULL || L < 0) return -1;
+	
+	/* Memory allocation */
+	unsigned int tr;
+	float complex **fxa1, **fxa2;
+	
+	fxa1 = (float complex **)fftw_malloc(Tr*sizeof(float complex *));
+	fxa1[0] = (float complex *)fftw_malloc(Tr*N*sizeof(float complex));
+	for (tr=1; tr<Tr; tr++) fxa1[tr] = fxa1[tr-1] + N;
+	
+	fxa2 = (float complex **)fftw_malloc(Tr*sizeof(float complex *));
+	fxa2[0] = (float complex *)fftw_malloc(Tr*N*sizeof(float complex));
+	for (tr=1; tr<Tr; tr++) fxa2[tr] = fxa2[tr-1] + N;
+	#ifdef CUDAON
+		sem_t *anok;
+		
+		anok = (sem_t *)malloc(Tr*sizeof(sem_t));
+		for (tr=0; tr<Tr; tr++) sem_init(&anok[tr], 0, 0);
+		
+		omp_set_nested(1);
+		#pragma omp parallel sections
+		{
+			#pragma omp section
+			{
+				#pragma omp parallel 
+				{
+					fftwf_plan pain, paout;
+					float *x;
+					float complex *xa;
+					
+					#pragma omp critical
+					{
+						x = (float *)fftw_malloc(N*sizeof(float));
+						xa = (float complex *)fftw_malloc(N*sizeof(float complex));
+						
+						pain = fftwf_plan_dft_r2c_1d(N, x, xa, FFTW_ESTIMATE);
+						paout = fftwf_plan_dft_1d(N, xa, xa, FFTW_BACKWARD, FFTW_ESTIMATE);
+					}
+					
+					#pragma omp for schedule(static,16)
+					for (tr=0; tr<Tr; tr++) {
+						memcpy(x, x1[tr], N*sizeof(float));
+						AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
+						memcpy(fxa1[tr], xa, N*sizeof(float complex));
+						
+						memcpy(x, x2[tr], N*sizeof(float));
+						AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
+						memcpy(fxa2[tr], xa, N*sizeof(float complex));
+						
+						sem_post(&anok[tr]);
+					}
+					
+					#pragma omp critical
+					{
+						fftw_free(x);
+						fftw_free(xa);
+						
+						fftwf_destroy_plan(pain);
+						fftwf_destroy_plan(paout);
+					}
+				}
+			}
+			#pragma omp section
+			{
+				OnTheCPU = ( 0 == pcc_highlevel (y, fxa1, fxa2, N, Tr, v, Lag1, Lag2, anok) ) ? 0 : 1;
+			}
+		}
+		for (tr=0; tr<Tr; tr++) sem_destroy(&anok[tr]);
+		free(anok);
+	#else
+		OnTheCPU = 1;
+		
+		#pragma omp parallel 
+		{
+			fftwf_plan pain, paout;
+			float *x;
+			float complex *xa;
+			
+			#pragma omp critical
+			{
+				x = (float *)fftw_malloc(N*sizeof(float));
+				xa = (float complex *)fftw_malloc(N*sizeof(float complex));
+				
+				pain = fftwf_plan_dft_r2c_1d(N, x, xa, FFTW_ESTIMATE);
+				paout = fftwf_plan_dft_1d(N, xa, xa, FFTW_BACKWARD, FFTW_ESTIMATE);
+			}
+			
+			#pragma omp for schedule(static)
+			for (tr=0; tr<Tr; tr++) {
+				memcpy(x, x1[tr], N*sizeof(float));
+				AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
+				memcpy(fxa1[tr], xa, N*sizeof(float complex));
+				
+				memcpy(x, x2[tr], N*sizeof(float));
+				AnalyticSignal_plan_float (xa, x, N, &pain, &paout);
+				memcpy(fxa2[tr], xa, N*sizeof(float complex));
+			}
+			
+			#pragma omp critical
+			{
+				fftw_free(x);
+				fftw_free(xa);
+				
+				fftwf_destroy_plan(pain);
+				fftwf_destroy_plan(paout);
+			}
+		}
+	#endif
+	
+	if (OnTheCPU) {
+		#pragma omp parallel for schedule(static)
+		for (tr=0; tr<Tr; tr++) {
+			AmpNormf(fxa1[tr], N);
+			AmpNormf(fxa2[tr], N);
+			
+			/* Zero outputs. */
+			memset(y[tr], 0, L*sizeof(float));
+		
+			/* The actual PCC computation */
+			pccf_lowlevel (y[tr], fxa1[tr], fxa2[tr], N, v, Lag1, Lag2);
+		}
+	}
+	
+	fftw_free(fxa1[0]);
+	fftw_free(fxa1);
+	fftw_free(fxa2[0]);
+	fftw_free(fxa2);
+	
+	return nerr;
+}
+#endif
 
 int pcc1_set (float ** const y, float ** const x1, float ** const x2, const int N, const unsigned int Tr, const int Lag1, const int Lag2) {
 	int L=Lag2-Lag1+1, nerr = 0, OnTheCPU;
@@ -594,7 +732,7 @@ int pcc1_set (float ** const y, float ** const x1, float ** const x2, const int 
 				memset(y[tr], 0, L*sizeof(float));
 			
 				/* The actual PCC computation */
-				pcc1f_lowlevel (y[tr], fxa1[tr], fxa2[tr], N, Lag1, Lag2);
+				pcc1f_lowlevel (y[tr], fxa2[tr], fxa1[tr], N, Lag1, Lag2);
 			}
 		}
 		
@@ -628,7 +766,7 @@ int pcc1_set (float ** const y, float ** const x1, float ** const x2, const int 
 					memset(y[tr], 0, L*sizeof(double));
 				
 					/* The actual PCC computation */
-					pcc1_lowlevel (yd, x1an, x2an, N, Lag1, Lag2);
+					pcc1_lowlevel (yd, x2an, x1an, N, Lag1, Lag2);
 					D2F_vec(y[tr], yd, L);
 					
 				}
@@ -671,7 +809,8 @@ int pcc2_set (float ** const y, float ** const x1, float ** const x2, const unsi
 		fftwf_plan pain1, paout1, pain2, paout2, pin1, pin2, pout;
 		float *x, fa1;
 		fftwf_complex *xa1=NULL, *xa2=NULL, *out=NULL;
-		unsigned int n, tr;
+		unsigned int tr;
+		int n;
 		
 		#pragma omp critical
 		{
@@ -709,7 +848,7 @@ int pcc2_set (float ** const y, float ** const x1, float ** const x2, const unsi
 				fftwf_execute(pin2);
 				
 				/* The actual xcorr */
-				for (n=0; n<Nz; n++) out[n] = xa1[n]*conj(xa2[n]);  /* the product        */
+				for (n=0; n<Nz; n++) out[n] = conj(xa1[n])*xa2[n];  /* the product        */
 				fftwf_execute(pout);                                /* IFFT of the result */
 				
 				/* Copy the lags of interest and normalize */
@@ -932,3 +1071,186 @@ int cc1b_set (float ** const y, float ** const x1, float ** const x2, const unsi
 	}
 	return nerr;
 }
+
+/* Frequency domain version. */
+int tspcc2_set (float ** const y, float ** const x1, float ** const x2, const unsigned int N, 
+		const unsigned int Tr, const int Lag1, const int Lag2, double pmin, double pmax, unsigned int V, int type, double op1) {
+	unsigned int J, S;
+	unsigned int Nz, M, m, ua1, ua2, Ls0;
+	double s0, b0, K0;
+	int L, nerr = 0;
+	t_WaveletFamily *pWF;
+	
+	L = abs(Lag2-Lag1+1);
+	
+	/* Memory allocation */
+	ua1 = abs(Lag1);
+	ua2 = abs(Lag2);
+	if (ua1 >= N || ua2 >= N) return -3; /* Too large lags */
+	M = (ua1 > ua2) ? ua1 : ua2;
+	Nz = 1 << (unsigned int)ceil(log2(N+M)); /* Because the lags higher than M are rejected */
+	
+	/* Zero outputs. */
+	for (int tr=0; tr<Tr; tr++) memset(y[tr], 0, L*sizeof(float));
+	
+	/* Wavelet initializations */
+	/* Downsampling is not supported yet. So, b0 is not used. */ 
+	if (type == -3) { /*    MexHat    */
+		s0 = pmin/(sqrt(2)*PI);
+		b0 = 0.5;
+	} else if (type == -1 || type == -2) { /*    Morlet    */
+		if (op1==0) op1 = PI*sqrt(2/log(2));  /* w0 parameter */
+		// op1 = PI*sqrt(2/log(2));  /* w0 parameter */
+		s0 = pmin*op1/(2*PI);
+		b0 = 0.5; // b0 = (unsigned int)pow( 2, round(log2(s0)) );
+	} else return -3;
+	J = (unsigned int)round(1./(double)V + log(pmax/pmin)/log(2));
+	pWF = CreateWaveletFamily (type, J, V, Nz, s0, b0, 0, op1, 1);
+	
+	S = V*J;
+	Ls0 = pWF->Ls[S-1];
+	if (Nz-(N+M) < Ls0) Nz *= 2; /* The longest wavelet (Ls0) is limited to Nz, so Nz *= 2 is enough. */
+	
+	K0 = 0;
+	for (m=0; m<S; m++) K0 += 1/pWF->scale[m];
+	
+	#ifdef CUDAON
+	{
+		/* float C = ( log(pWF->a0) / (2 * pWF->Cpsi * pWF->V) ) / (double)N; */
+		float C = 1./(K0*(double)N);
+		
+		cuda_tspcc2_set_freq(y, x1, x2, N, Tr, Nz, Lag1, Lag2, S, pWF->scale, pWF->wframe.wc, pWF->Ls, pWF->center, pWF->Down_smp, C);
+	}
+	#else
+	{
+		fftw_plan pw;
+		double complex *pc, **fw;
+		int c, Ls, lag;
+		
+		lag = (Lag2 >= Lag1) ? Lag1 : Lag2;
+		
+		fw = (fftw_complex **)malloc(S*sizeof(fftw_complex *));
+		fw[0] = (fftw_complex *)fftw_malloc(S*Nz*sizeof(fftw_complex));
+		for (int s=1; s<S; s++) fw[s] = fw[s-1] + Nz;
+		
+		/* FFTs of the Wavelet Family */
+		for (int s=0; s<S; s++) {
+			pw = fftw_plan_dft_1d(Nz, fw[s], fw[s], FFTW_FORWARD, FFTW_ESTIMATE);
+			
+			pc = pWF->wframe.wc[s];
+			c  = pWF->center[s];
+			Ls = pWF->Ls[s]; 
+			memcpy(fw[s],        pc+c, (Ls-c)*sizeof(fftw_complex));
+			memset(fw[s] + Ls-c, 0,    (Nz-Ls)*sizeof(fftw_complex));
+			memcpy(fw[s] + Nz-c, pc,   c*sizeof(fftw_complex));
+			
+			fftw_execute(pw);
+			fftw_destroy_plan(pw);
+		}
+		
+		#pragma omp parallel
+		{
+			fftw_plan pin1, pin2, py_wt, px1_wt, px2_wt, px1_iwt, px2_iwt;
+			double complex *in1, *in2, *x1_wt, *x2_wt, *y_wt, *pc1;
+			double da2, da3, C;
+			float *pf1;
+			int tr, s, n;
+			
+			#pragma omp critical
+			{
+				/* Initializations */
+				in1 = (fftw_complex *)fftw_malloc(Nz*sizeof(fftw_complex));
+				in2 = (fftw_complex *)fftw_malloc(Nz*sizeof(fftw_complex));
+				x1_wt = (fftw_complex *)fftw_malloc(Nz*sizeof(fftw_complex));
+				x2_wt = (fftw_complex *)fftw_malloc(Nz*sizeof(fftw_complex));
+				y_wt  = (fftw_complex *)fftw_malloc(Nz*sizeof(fftw_complex));
+				
+				/* Create plans */
+				pin1 = fftw_plan_dft_1d(Nz, in1, in1, FFTW_FORWARD, FFTW_ESTIMATE);
+				pin2 = fftw_plan_dft_1d(Nz, in2, in2, FFTW_FORWARD, FFTW_ESTIMATE);
+				px1_iwt = fftw_plan_dft_1d(Nz, x1_wt, x1_wt, FFTW_BACKWARD, FFTW_ESTIMATE);
+				px2_iwt = fftw_plan_dft_1d(Nz, x2_wt, x2_wt, FFTW_BACKWARD, FFTW_ESTIMATE);
+				px1_wt  = fftw_plan_dft_1d(Nz, x1_wt, x1_wt, FFTW_FORWARD,  FFTW_ESTIMATE);
+				px2_wt  = fftw_plan_dft_1d(Nz, x2_wt, x2_wt, FFTW_FORWARD,  FFTW_ESTIMATE);
+				py_wt   = fftw_plan_dft_1d(Nz,  y_wt,  y_wt, FFTW_BACKWARD, FFTW_ESTIMATE); /* IFFT plan          */
+			}
+			
+			/* C = ( log(pWF->a0) / (2 * pWF->Cpsi * pWF->V) )  / (double)N; */
+			C = 1./(K0*(double)N);
+			da2 = 1./(double)Nz;
+			
+			#pragma omp for schedule(static)
+			for (tr=0; tr<Tr; tr++) {
+				/* Decomposition */
+				pf1 = x1[tr];
+				memset(in1, 0, Ls0*sizeof(fftw_complex));
+				pc1 = in1 + Ls0;
+				for (n=0; n<N; n++) pc1[n] = da2*pf1[n];
+				memset(pc1 + N, 0, (Nz-N-Ls0)*sizeof(fftw_complex));
+				fftw_execute(pin1);
+				
+				pf1 = x2[tr];
+				memset(in2, 0, Ls0*sizeof(fftw_complex));
+				pc1 = in2 + Ls0;
+				for (n=0; n<N; n++) pc1[n] = da2*pf1[n];
+				memset(pc1 + N, 0, (Nz-N-Ls0)*sizeof(fftw_complex));
+				fftw_execute(pin2);
+				
+				/* BPFs + PCCs + Lazy Inverse */
+				memset(y_wt, 0, Nz*sizeof(fftw_complex));
+				for (s=0; s<S; s++) {
+					pc1 = fw[s];
+					/* CWT of in1 at the scale s */
+					for (n=0; n<Nz; n++) x1_wt[n] = in1[n]*pc1[n];
+					fftw_execute(px1_iwt);
+					AmpNorm(x1_wt, Nz);
+					fftw_execute(px1_wt);
+					
+					/* CWT of in2 at the scale s */
+					for (n=0; n<Nz; n++) x2_wt[n] = in2[n]*pc1[n];
+					fftw_execute(px2_iwt);
+					AmpNorm(x2_wt, Nz);
+					fftw_execute(px2_wt);
+					
+					/* Product & Lazy inverse */
+					// for (n=0; n<Nz; n++) y_wt[n] += x1_wt[n]*conj(x2_wt[n]); /* the product        */
+					da3 = 1./(pWF->scale[s] * (double)Nz);
+					for (n=0; n<Nz; n++) y_wt[n] += da3 * conj(x1_wt[n])*x2_wt[n];  /* the product      */
+				} 
+				fftw_execute(py_wt);                                         /* IFFT of the result */
+				
+				/* Copy the lag of interest and normalize */
+				for (n=0; n<-lag; n++) y[tr][n] = C * creal(y_wt[n+Nz+lag]);
+				for (   ; n<L;    n++) y[tr][n] = C * creal(y_wt[n+lag]);
+			}
+			
+			#pragma omp critical
+			{
+				/* Destroy plans */
+				fftw_destroy_plan(pin1);
+				fftw_destroy_plan(pin2);
+				fftw_destroy_plan(px1_wt);
+				fftw_destroy_plan(px2_wt);
+				fftw_destroy_plan(px1_iwt);
+				fftw_destroy_plan(px2_iwt);
+				fftw_destroy_plan(py_wt);
+			
+				/* Cleaning */
+				fftw_free(x1_wt);
+				fftw_free(x2_wt);
+				fftw_free(y_wt);
+				fftw_free(in1);
+				fftw_free(in2);
+			}
+		}
+		
+		fftw_free(fw[0]);
+		free(fw);
+	}
+	#endif
+	
+	DestroyWaveletFamily (pWF);
+
+	return nerr;
+}
+

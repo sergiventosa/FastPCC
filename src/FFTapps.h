@@ -13,5 +13,6 @@ int pcc1_set (float ** const y, float ** const x1, float ** const x2, const int 
 int pcc2_set (float ** const y, float ** const x1, float ** const x2, const unsigned int N, const unsigned int Tr, const int Lag1, const int Lag2);
 int ccgn_set (float ** const y, float ** const x1, float ** const x2, const unsigned int N, const unsigned int Tr, const int Lag1, const int Lag2);
 int cc1b_set (float ** const y, float ** const x1, float ** const x2, const unsigned int N, const unsigned int Tr, const int Lag1, const int Lag2);
+int tspcc2_set (float ** const y, float ** const x1, float ** const x2, const unsigned int N, const unsigned int Tr, const int Lag1, const int Lag2, double pmin, double pmax, unsigned int V, int type, double op1);
 
 #endif

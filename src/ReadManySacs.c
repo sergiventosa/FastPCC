@@ -7,6 +7,7 @@
 /* Jun25 (1b) Relax criteria to accept SAC files in ReadManySacs()           */
 /*  - Sequences having more than N samples are now considered, but cut at    */
 /*    sample N.                                                              */
+/* Abr13 (1c) The ReadManySacs() now reads only metada when *xOut == NULL    */
 /*****************************************************************************/
 
 #include <complex.h>  /* When done before fftw3.h, makes fftw3.h use C99 complex types. */
@@ -19,7 +20,6 @@
 #include <string.h>
 #include <math.h>
 #include "ReadManySacs.h"
-
 /*
 char *set_utc () {
 	char *tz;
@@ -33,10 +33,8 @@ char *set_utc () {
 }
 
 void restor_tz (char *tz) {
-	if (tz) {
-		setenv ("TZ", tz, 1);
-		free (tz);
-	} else unsetenv ("TZ");
+	if (tz) setenv ("TZ", tz, 1);
+	else unsetenv ("TZ");
 	tzset ();
 	free (tz);
 }
@@ -92,8 +90,8 @@ float **Destroy_FloatArrayList (float **x, unsigned int Tr) {
 	unsigned int tr;
 	
 	if (x != NULL) {
-	for (tr=0; tr<Tr; tr++) fftw_free(x[tr]);
-	free(x);
+		for (tr=0; tr<Tr; tr++) fftw_free(x[tr]);
+		free(x);
 	}
 	
 	return NULL;
@@ -108,6 +106,19 @@ float **Create_FloatArrayList (unsigned int N, unsigned int Tr) {
 		if (NULL == (x[tr] = (float *)fftw_malloc(N * sizeof(float)) ))
 			return Destroy_FloatArrayList(x, Tr);
 	return x;
+}
+
+float **Copy_FloatArrayList (float **x, unsigned int N, unsigned int Tr) {
+	unsigned int tr;
+	float **y = NULL;
+	
+	if (NULL == (y = (float **)calloc(Tr, sizeof(float *)) )) return NULL;
+	for (tr=0; tr<Tr; tr++) {
+		if (NULL == (y[tr] = (float *)fftw_malloc(N * sizeof(float)) ))
+			return Destroy_FloatArrayList(x, Tr);
+		memcpy(y[tr], x[tr], N*sizeof(float));
+	}
+	return y;
 }
 
 int nerr_OutOfMem_print (char *filename, int npts) {
@@ -136,26 +147,29 @@ int ReadLocation (double *lat, double *lon, char *fin) {
 	fclose (fid);
 	
 	rsach (filename, &nerr, strlen(filename));
-	getfhv ("stla", &stla, &nerr, strlen("stla")); if (nerr) return nerr;
-	*lat=(double)stla;
-	getfhv ("stlo", &stlo, &nerr, strlen("stlo")); if (nerr) return nerr;
-	*lon=(double)stlo;
+	getfhv ("stla", &stla, &nerr, strlen("stla")); 
+	if (nerr) { *lat=0.; nerr = -4; }
+	else *lat=(double)stla;
+	
+	getfhv ("stlo", &stlo, &nerr, strlen("stlo"));
+	if (nerr) { *lon=0.; nerr = -4; }
+	else *lon=(double)stlo;
 	
 	return nerr;
 }
 
-int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin) {
+int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], char **filenamesOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin) {
 	t_HeaderInfo *SacHeader=NULL, *phdr1;
 	float **x = NULL, *sig=NULL;
 	float beg, beg1, dt, dt1;
 	unsigned int tr, Tr, N, nskip, npts;
 	int nerr, Nmax, ia1;
-	char **filenames = NULL, *filename=NULL, *pch;
+	char **filenames=NULL, *filename=NULL, *pch;
 	/* time_t t1; */
 	struct tm tm;
 	
 	*TrOut = 0;
-	*xOut  = NULL;
+	// *xOut  = NULL;
 	*SacHeaderOut = NULL;
 	
 	if (fin == NULL) {printf("ReadManySacs: NULL filename\n"); return -1;}
@@ -186,14 +200,16 @@ int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *Tr
 	
 	/* Allocate memory for the input traces */
 	Nmax = N;
-	if (NULL == (x = Create_FloatArrayList (N, Tr) )) nerr = 4;
-	if (NULL == (sig = (float *)calloc(N, sizeof(float)) )) nerr = 4;
-	if (nerr == 4) {
-		DestroyFilelist(filenames);
-		Destroy_FloatArrayList(x, Tr);
-		free(sig);
-		free(SacHeader);
-		return nerr_OutOfMem_print (filename, N);
+	if (xOut != NULL) {
+		if (NULL == (x = Create_FloatArrayList (N, Tr) )) nerr = 4;
+		if (NULL == (sig = (float *)calloc(N, sizeof(float)) )) nerr = 4;
+		if (nerr == 4) {
+			Destroy_FloatArrayList(x, Tr);
+			free(sig);
+			free(SacHeader);
+			DestroyFilelist(filenames);
+			return nerr_OutOfMem_print (filename, N);
+		}
 	}
 	
 	/*************************/
@@ -202,14 +218,24 @@ int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *Tr
 	nskip = 0;
 	for (tr=0; tr<Tr; tr++) {
 		filename = filenames[tr];
-		rsac1(filename, sig, &ia1, &beg, &dt, &Nmax, &nerr, strlen(filename));
-		// sac_warning_off (); // Not supported from v102.0
-		npts = (unsigned)ia1;
+		// Not supported from v102.0
+		// sac_warning_off ();
+
+		if (xOut != NULL)
+			rsac1(filename, sig, &ia1, &beg, &dt, &Nmax, &nerr, strlen(filename));
+		else {
+			rsach (filename, &nerr, strlen(filename));       if (nerr) return nerr_print (filename, nerr);
+			getnhv ("npts",  &ia1,  &nerr, strlen("npts"));  if (nerr) return nerr_print (filename, nerr);
+			getfhv ("delta", &dt,   &nerr, strlen("delta")); if (nerr) return nerr_print (filename, nerr);
+			getfhv ("b",     &beg,  &nerr, strlen("b"));     if (nerr) return nerr_print (filename, nerr);
+		}
 		
+		npts = (unsigned)ia1;
 		phdr1 = &SacHeader[tr-nskip];
 		phdr1->b     = beg;
 		phdr1->dt    = dt;
 		phdr1->npts  = ia1;
+
 		/* Get a few more sac header fields */
 		getnhv ("nzyear", &phdr1->year, &nerr, strlen("nzyear"));
 		getnhv ("nzjday", &phdr1->yday, &nerr, strlen("nzjday"));
@@ -217,10 +243,10 @@ int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *Tr
 		getnhv ("nzmin",  &phdr1->min,  &nerr, strlen("nzmin"));
 		getnhv ("nzsec",  &phdr1->sec,  &nerr, strlen("nzsec"));
 		getnhv ("nzmsec", &phdr1->msec, &nerr, strlen("nzmsec"));
-		getkhv ("knetwk",  phdr1->net,  &nerr, strlen("knetwk"), 8);
-		getkhv ("kstnm",   phdr1->sta,  &nerr, strlen("kstnm"), 8);
-		getkhv ("kcmpnm",  phdr1->chn,  &nerr, strlen("kcmpnm"), 8);
-		getkhv ("khole",   phdr1->loc,  &nerr, strlen("khole"), 8); if (nerr) { phdr1->loc[0] = '\0'; nerr = 0; }
+		getkhv ("knetwk",  phdr1->net,  &nerr, strlen("knetwk"), 8); if (nerr) { phdr1->net[0] = '\0'; nerr = 0; }
+		getkhv ("kstnm",   phdr1->sta,  &nerr, strlen("kstnm"),  8); if (nerr) { phdr1->sta[0] = '\0'; nerr = 0; }
+		getkhv ("kcmpnm",  phdr1->chn,  &nerr, strlen("kcmpnm"), 8); if (nerr) { phdr1->chn[0] = '\0'; nerr = 0; }
+		getkhv ("khole",   phdr1->loc,  &nerr, strlen("khole"),  8); if (nerr) { phdr1->loc[0] = '\0'; nerr = 0; }
 		getfhv ("stla",   &phdr1->stla, &nerr, strlen("stla")); if (nerr) { phdr1->nostloc = 1; nerr = 0; }
 		getfhv ("stlo",   &phdr1->stlo, &nerr, strlen("stlo")); if (nerr) { phdr1->nostloc = 1; nerr = 0; }
 		getfhv ("stel",   &phdr1->stel, &nerr, strlen("stel")); if (nerr) { phdr1->stel = 0; nerr = 0; }
@@ -233,6 +259,7 @@ int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *Tr
 		if ( (pch = memchr(phdr1->loc, ' ', 8)) ) pch[0] = '\0';
 		if ( !strncmp(phdr1->loc, SAC_CHAR_UNDEFINED, 6) ) phdr1->loc[0] = '\0';
 		
+		memset(&tm, 0, sizeof(tm));
 		tm.tm_year  = phdr1->year-1900;
 		tm.tm_mon   = 0;
 		tm.tm_mday  = phdr1->yday;
@@ -272,22 +299,25 @@ int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *Tr
 		}
 		
 		/* Copy the data */
-		memcpy(x[tr-nskip], sig, N*sizeof(float));
+		if (x != NULL && sig != NULL) memcpy(x[tr-nskip], sig, N*sizeof(float));
 	}
 	Tr -= nskip;
 	
 	/* Clean up */
-	for (tr=Tr; tr<Tr+nskip; tr++) {
-		fftw_free(x[tr]);
-		x[tr] = NULL;
+	if (x != NULL) {
+		for (tr=Tr; tr<Tr+nskip; tr++) {
+			fftw_free(x[tr]);
+			x[tr] = NULL;
+		}
 	}
-	free(sig);
-	DestroyFilelist(filenames);
+	if (sig != NULL) free(sig);
+	if (filenamesOut != NULL) *filenamesOut = filenames;
+	else DestroyFilelist(filenames);
 	
 	*TrOut = Tr;
 	*NOut  = N;
 	*dtOut = dt1;
-	*xOut  = x;
+	if (xOut != NULL) *xOut  = x;
 	*SacHeaderOut = SacHeader;
 	
 	return 0;
@@ -367,10 +397,10 @@ int ReadManySacs_WithDiffLength (float **xOut[], t_HeaderInfo *SacHeaderOut[], u
 		getnhv ("nzmin",  &phdr1->min,  &nerr, strlen("nzmin"));
 		getnhv ("nzsec",  &phdr1->sec,  &nerr, strlen("nzsec"));
 		getnhv ("nzmsec", &phdr1->msec, &nerr, strlen("nzmsec"));
-		getkhv ("knetwk",  phdr1->net,  &nerr, strlen("knetwk"), 8);
-		getkhv ("kstnm",   phdr1->sta,  &nerr, strlen("kstnm"), 8);
-		getkhv ("kcmpnm",  phdr1->chn,  &nerr, strlen("kcmpnm"), 8);
-		getkhv ("khole",   phdr1->loc,  &nerr, strlen("khole"), 8); if (nerr) phdr1->loc[0] = '\0';
+		getkhv ("knetwk",  phdr1->net,  &nerr, strlen("knetwk"), 8); if (nerr) phdr1->net[0] = '\0';
+		getkhv ("kstnm",   phdr1->sta,  &nerr, strlen("kstnm"),  8); if (nerr) phdr1->sta[0] = '\0';
+		getkhv ("kcmpnm",  phdr1->chn,  &nerr, strlen("kcmpnm"), 8); if (nerr) phdr1->chn[0] = '\0';
+		getkhv ("khole",   phdr1->loc,  &nerr, strlen("khole"),  8); if (nerr) phdr1->loc[0] = '\0';
 		getfhv ("stla",   &phdr1->stla, &nerr, strlen("stla")); if (nerr) phdr1->nostloc = 1;
 		getfhv ("stlo",   &phdr1->stlo, &nerr, strlen("stlo")); if (nerr) phdr1->nostloc = 1;
 		getfhv ("stel",   &phdr1->stel, &nerr, strlen("stel")); if (nerr) phdr1->stel = 0;
@@ -399,6 +429,7 @@ int ReadManySacs_WithDiffLength (float **xOut[], t_HeaderInfo *SacHeaderOut[], u
 			continue;
 		}
 		
+		memset(&tm, 0, sizeof(tm));
 		tm.tm_year  = phdr1->year-1900;
 		tm.tm_mon   = 0;
 		tm.tm_mday  = phdr1->yday;

@@ -43,12 +43,11 @@ int main_job (char *outfile, char *filelist, int Nmax) {
 	int nerr=0;
 	float dt;
 	
-	nerr = ReadManySacs (&x, &hdr, &Tr, &N, &dt, filelist);
-	// printf("sta=%s\n", hdr->sta);
-	if (nerr != 0) printf("Error %d when reading %s.", nerr, filelist);
+	nerr = ReadManySacs (&x, &hdr, NULL, &Tr, &N, &dt, filelist);
+	if (nerr != 0) printf("Error %d when reading %s.\n", nerr, filelist);
 	else {
 		nerr = Write_ManySacsFile (x, hdr, Tr, N, outfile);
-		if (nerr != 0) printf("Error %d when writing to %s.", nerr, outfile);
+		if (nerr != 0) printf("Error %d when writing to %s.\n", nerr, outfile);
 	}
 	return nerr;
 }

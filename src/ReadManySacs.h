@@ -36,10 +36,12 @@ typedef struct {
 	int32_t  SingleChannel; /* 0 (different) / 1 (equal) channels    */ 
 } t_HeaderManySacsBinary;
 
+time_t my_timegm (struct tm *tm);
 float **Destroy_FloatArrayList (float **x, unsigned int Tr);
 float **Create_FloatArrayList (unsigned int N, unsigned int Tr);
+float **Copy_FloatArrayList (float **x, unsigned int N, unsigned int Tr);
 int ReadLocation (double *stlat, double *stlon, char *fin);
-int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin);
+int ReadManySacs (float **xOut[], t_HeaderInfo *SacHeaderOut[], char **filenamesOut[], unsigned int *TrOut, unsigned int *NOut, float *dtOut, char *fin);
 int ReadManySacs_WithDiffLength (float **xOut[], t_HeaderInfo *SacHeaderOut[], unsigned int *TrOut, char *fin);
 void DestroyFilelist (char *p[]);
 int CreateFilelist (char **filename[], unsigned int *Tr, char *filelist);
