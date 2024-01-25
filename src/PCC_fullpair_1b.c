@@ -505,7 +505,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 
 void infooo() {
 	puts("\nThis program computes the geometrically-normalized (CCGN), 1-bit correlation (1-bit CCGN), phase cross-correlations (PCC) and wavelet phase cross-correlations (WPCC) between seismograms from two stations.");
-	puts("I developed this program for Ventosa et al. (2017) and I further developed and presented it in Ventosa et al. (2019) and Ventosa & Schimmel (2023). PCC was originally introducced in Schimmel (1999).\n");
+	puts("I developed this program for Ventosa et al. (2017) and I further developed and presented it in Ventosa et al. (2019) and Ventosa & Schimmel (2023). PCC was originally introduced in Schimmel (1999).\n");
 	puts("Schimmel, M., 1999.  Phase cross-correlations: Design, comparisons, and applications, Bulletin of the Seismological Society of America, 89(5), 1366-1378.\n");
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2017. Extracting surface waves, hum and normal modes: Time-scale phase-weighted stack and beyond, Geophysical Journal International, 211(1), 30-44, doi:10.1093/gji/ggx284.\n");
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2019. Towards the processing of large data volumes with phase cross-correlation, Seismological Research Letters, 90(4), 1663-1669, doi:10.1785/0220190022.\n"); 
