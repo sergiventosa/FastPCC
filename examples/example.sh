@@ -27,12 +27,14 @@ time ../bin/PCC_fullpair_1b G/CAN/filelist.txt G/ECH/filelist.txt pcc tl1=-12000
 #  3) Correlate them using 1-bit correlation from the lag time of -12000 s to 12000 s.
 echo "1-bit correlation"
 time ../bin/PCC_fullpair_1b G/CAN/filelist.txt G/ECH/filelist.txt cc1b tl1=-12000 tl2=12000
-#  3) Correlate them using PCC power of 1 (v=1) from the lag time of -12000 s to 12000 s.
+#  4) Correlate them using PCC power of 1 (v=1) from the lag time of -12000 s to 12000 s.
 echo "PCC1"
 time ../bin/PCC_fullpair_1b G/CAN/filelist.txt G/ECH/filelist.txt pcc v=1 tl1=-12000 tl2=12000
 #  5) The same as in 3) but using the GPU
 echo "PCC1 using CUDA"
 time ../bin/PCC_fullpair_1b_cuda G/CAN/filelist.txt G/ECH/filelist.txt pcc v=1 tl1=-12000 tl2=12000
+#  6) Correlate them using WPCC2 from 25 to 330 s periods from the lag time of -12000 s to 12000 s.
+time ../bin/PCC_fullpair_1b G/CAN/filelist.txt G/ECH/filelist.txt wpcc2 tl1=-12000 tl2=12000 pmin=25 pmax=330
 
 # Example 2: Gather the sac files of each station in a binary file and correlated them.
 echo -e "\nExample 2:"
