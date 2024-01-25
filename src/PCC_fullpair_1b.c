@@ -192,7 +192,12 @@ int main(int argc, char *argv[]) {
 		printf("PCCfullpair: Warning, the std option cannot be used without automatic trace pairing.\n");
 		fpcc.std = 0;
 	}
-	er = PCCfullpair_main(&fpcc); /* The one who make the job. */
+	if (fpcc.pmin > fpcc.pmax) {
+		printf("PCCfullpair: Error, pmax has to be higher than pmin.\n");
+		er = 1;
+	}
+	
+	if (!er) er = PCCfullpair_main(&fpcc); /* The one who make the job. */
 	return er;
 }
 
@@ -499,14 +504,14 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 }
 
 void infooo() {
-	puts("\nThis program computes the geometrically-normalized (CCGN), 1-bit correlation (1-bit CCGN), phase cross-correlations (PCC) and wavelet phase cross-correlation (WPCC) between seismograms from two stations.");
-	puts("I developed this program for Ventosa et al. (2017) and I further developed and presented it in Ventosa et al. (2019) and Ventosa & Schimmel (2003). Information on the PCC is published in Schimmel (1999).\n");
+	puts("\nThis program computes the geometrically-normalized (CCGN), 1-bit correlation (1-bit CCGN), phase cross-correlations (PCC) and wavelet phase cross-correlations (WPCC) between seismograms from two stations.");
+	puts("I developed this program for Ventosa et al. (2017) and I further developed and presented it in Ventosa et al. (2019) and Ventosa & Schimmel (2023). PCC was originally introducced in Schimmel (1999).\n");
 	puts("Schimmel, M., 1999.  Phase cross-correlations: Design, comparisons, and applications, Bulletin of the Seismological Society of America, 89(5), 1366-1378.\n");
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2017. Extracting surface waves, hum and normal modes: Time-scale phase-weighted stack and beyond, Geophysical Journal International, 211(1), 30-44, doi:10.1093/gji/ggx284.\n");
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2019. Towards the processing of large data volumes with phase cross-correlation, Seismological Research Letters, 90(4), 1663-1669, doi:10.1785/0220190022.\n"); 
 	puts("Ventosa, S. & M. Schimmel, 2023. Broadband empirical Green’s function extraction with data adaptive phase correlations, IEEE Transactions on Geoscience and Remote Sensing, doi:10.1109/TGRS.2023.3294302.\n");
 	puts("AUTHOR: Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)");
-	puts("Last modification: 13/07/2023\n");
+	puts("Last modification: 25/01/2024\n");
 }
 
 void usage() {
@@ -539,6 +544,14 @@ void usage() {
 	puts("  info   : write background and main references to screen.");
 	puts("           Just type: PCC_fullpair_1b info.");
 	puts("");
+	puts("Parameters controlling wavelet phase cross-correlation:");
+	puts("  pmin=  : Shorter period analyzed.");
+	puts("  pmax=  : Longer period analyzed.");
+	puts("  V=     : Number of voices per octaves (default 2).");
+	puts("  type=  : -1 Morlet Wavelet,");
+	puts("           -3 Complex Mexican Hat (default).");
+	puts("  w0=    : Central frequency of the Morlet wavelet (default 5.3364 rad/s).");
+	puts("");
 	puts("Input/Output data format");
 	puts("  isac   : Input traces are in the SAC format (default)");
 	puts("  imsacs : Input traces are garthered in two files, one per station, replacing filelist1 and filelist2");
@@ -568,7 +581,7 @@ void usage() {
 	puts("     Filelist2msacs filelist2.txt sta2.msacs");
 	puts("     PCC_fullpair_1b sta1.msacs sta2.msacs imsacs tl1=-1000 tl2=1000 cc1b pcc v=2");
 	puts("");
-	puts("AUTHOR: Sergi Ventosa, 13/07/2023");
+	puts("AUTHOR: Sergi Ventosa, 25/01/2024");
 	puts("Version 1.1.0");
 	puts("Please, do not hesitate to send bugs, comments or improvements to sergiventosa(at)hotmail.com\n");
 }
