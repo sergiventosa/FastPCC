@@ -37,9 +37,9 @@
 /*   - Station 1 is the virtual source and station 2 the virtual receiver    */
 /*     (event and station in the sac header, respectively), but computations */
 /*     were done using the opposite criterion.                               */
-/* Abr14 (1d) Minor update to compile with SAC v102.0                        */
+/* Abr14 (1b) Minor update to compile with SAC v102.0                        */
 /* **** 2023 ****                                                            */
-/* Jan05 (1d)                                                                */
+/* Jan05 (1b)                                                                */
 /*   - Release the code to compute the wavelet phase cross-correlation       */
 /*     (WPCC).                                                               */
 /*   - Bug correction:                                                       */
@@ -422,7 +422,8 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	}
 	L = Lag2-Lag1+1;
 	
-	printf("Lag1 = %d, Lag2 = %d, L = %d, N = %d, Tr = %d, gcarc = %f\n", Lag1, Lag2, L, N, Tr, gcarc);
+	printf("Lag1 = %d smpl (%d s), Lag2 = %d smpl (%d s), ", Lag1, (int)(Lag1*dt), Lag2, (int)(Lag2*dt));
+	printf("L = %d smpl (%d s), N = %d smpl, Tr = %d, gcarc = %f deg\n",  L, (int)((L-1)*dt), N, Tr, gcarc);
 	if (Tr <= fpcc->mincc) {
 		if (!Tr) printf("NO INTERSTATION CORRELATION TO BE COMPUTED.\n");
 		else printf("ONLY %d INTERSTATION CORRELATION COULD BE COMPUTED.\n", Tr); 
@@ -441,7 +442,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 					pmax /= dt;
 				}
 			}
-			printf("pmin = %f, pmax = %f\n", pmin, pmax);
+			printf("pmin = %f smpl (%f s), pmax = %f smpl (%f s)\n", pmin, pmin*dt, pmax, pmax*dt);
 		}
 		
 		if (fpcc->v==2)      strcpy(nickpcc, "pcc2");
