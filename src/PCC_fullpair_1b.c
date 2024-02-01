@@ -546,8 +546,8 @@ void usage() {
 	puts("           Just type: PCC_fullpair_1b info.");
 	puts("");
 	puts("Parameters controlling wavelet phase cross-correlation:");
-	puts("  pmin=  : Shorter period analyzed.");
-	puts("  pmax=  : Longer period analyzed.");
+	puts("  pmin=  : Shorter period analyzed in seconds.");
+	puts("  pmax=  : Longer period analyzed in seconds.");
 	puts("  V=     : Number of voices per octaves (default 2).");
 	puts("  type=  : -1 Morlet Wavelet,");
 	puts("           -3 Complex Mexican Hat (default).");
