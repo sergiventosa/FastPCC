@@ -595,7 +595,7 @@ int pcc_set (float ** const y, float ** const x1, float ** const x2, const int N
 			memset(y[tr], 0, L*sizeof(float));
 		
 			/* The actual PCC computation */
-			pccf_lowlevel (y[tr], fxa1[tr], fxa2[tr], N, v, Lag1, Lag2);
+			pccf_lowlevel (y[tr], fxa2[tr], fxa1[tr], N, v, Lag1, Lag2);
 		}
 	}
 	
