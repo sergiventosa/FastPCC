@@ -4,7 +4,7 @@ dir0=`pwd`
 cd ../src
 make clean
 rm -f ../bin/Filelist2msacs ../bin/PCC_fullpair_1b ../bin/PCC_fullpair_1b_cuda
-make
+make Filelist2msacs PCC_fullpair_1b
 make PCC_fullpair_1b_cuda
 make install
 cd $dir0
