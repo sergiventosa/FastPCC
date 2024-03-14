@@ -1,7 +1,7 @@
 CC=gcc
 NVCC=nvcc
 DEBUG=-g -DDEBUG -pg -O0
-OPT = -Ofast -march=native -flto
+OPT = -Ofast -march=native -flto=auto
 CFLAGS=-c -std=c99 -Wall $(OPT) -I$(SACHOME)/include -IFWTa -ITools -fopenmp -pthread -DNoThreads
 LFLAGS=-std=c99 -Wall $(OPT) -fopenmp -pthread
 CLIBS=-lm -lfftw3 -lfftw3f -lstdc++
@@ -14,7 +14,7 @@ libsac = $(SACHOME)/lib/sacio.a
 
 VPATH = FWTa:Tools
 
-all: PCC_fullpair_1b PCC_fullpair_1b_cuda Filelist2msacs
+all: Filelist2msacs PCC_fullpair_1b PCC_fullpair_1b_cuda
 
 PCC_fullpair_1b_cuda: PCC_fullpair_1b.o FFTapps_cuda.o ccs_cuda.o ReadManySacs.o rotlib.o sph.o wavelet_v7.o wavelet_def_v7.o wavelet_mem_v7.o cdotx.o myallocs.o prnmsg.o
 	$(NVCC) $(LUFLAGS) -o PCC_fullpair_1b_cuda PCC_fullpair_1b.o FFTapps_cuda.o ccs_cuda.o ReadManySacs.o rotlib.o sph.o wavelet_v7.o wavelet_def_v7.o wavelet_mem_v7.o cdotx.o myallocs.o prnmsg.o $(libsac) $(CLIBS) $(CULIBS) 
