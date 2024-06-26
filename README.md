@@ -4,8 +4,8 @@ Fast phase cross-correlation
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 
 Software to compute interstation correlations, including fast implementations of the 
-phase cross-correlation (Ventosa et al., SRL 2019) and wavelet phase cross-correlation
-(Ventosa & Schimmel, 2023) with and without using the GPU.
+phase cross-correlation [(Ventosa et al., SRL 2019)](https://doi.org/10.1785/0220190022) and wavelet phase cross-correlation
+[(Ventosa & Schimmel, IEEE-TGRS 2023)](https://doi.org/10.1109/TGRS.2023.3294302) with and without using the GPU.
 
 The software packages of fast phase cross-correlation and [ts-PWS](https://github.com/sergiventosa/ts-PWS) 
 stacking are basic building blocks in the design of efficient signal extraction methods 
