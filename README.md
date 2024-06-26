@@ -73,10 +73,10 @@ Paper to be cited
 -----------------
 Ventosa S. & M. Schimmel, 2023. Broadband empirical Green’s function extraction
 with data adaptive phase correlations, IEEE Transactions on Geoscience and Remote Sensing,
-61:1-17, doi:10.1109/TGRS.2023.3294302
+61:1-17, doi:[10.1109/TGRS.2023.3294302](https://doi.org/10.1109/TGRS.2023.3294302)
 
 Ventosa S., Schimmel M. & E. Stutzmann, 2019. Towards the processing of large data 
 volumes with phase cross-correlation, Seismological Research Letters, 90(4):1663-1669, 
-doi:10.1785/022019002
+doi:[10.1785/022019002](https://doi.org/10.1785/022019002)
 
 2024/06/26 Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)
