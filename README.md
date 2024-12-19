@@ -79,4 +79,4 @@ Ventosa S., Schimmel M. & E. Stutzmann, 2019. Towards the processing of large da
 volumes with phase cross-correlation, Seismological Research Letters, 90(4):1663-1669, 
 doi:[10.1785/0220190022](https://doi.org/10.1785/0220190022)
 
-2024/06/26 Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)
+2024/12/18 Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)
