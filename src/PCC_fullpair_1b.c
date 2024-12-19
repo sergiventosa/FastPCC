@@ -45,6 +45,13 @@
 /*   - Bug correction:                                                       */
 /*       Correlations were not computed if nl1>0 or tl1>0.                   */
 /*       Station latitud and longitud are not required any more.             */
+/* **** 2024 ****                                                            */
+/* Mar14 (1b) Bug correction                                                 */
+/*       In the CPU version, the virtual source and receiver were swapped    */
+/*       for PCC with v different than 1 and 2.                              */
+/* Dec09 (1b) Bug correction                                                 */
+/*       RemoveOutlierTraces() may removes wrong sequences.                  */
+/*       AveWhite() initialization of H was missing.                         */
 /*****************************************************************************/
 
 #include <complex.h>  /* fftw3.h use C99 complex types when complex.h is included before. */
@@ -404,7 +411,7 @@ int PCCfullpair_main (t_PCCmatrix *fpcc) {
 	/* Whittenings */
 	if (fpcc->awhite[0] > 0 && fpcc->awhite[1] > fpcc->awhite[0]) {
 		AveWhite (x1, N, Tr, fpcc->awhite, dt);
-		AveWhite (x2, N, Tr, fpcc->awhite, dt);
+		if (fpcc->acc == 0) AveWhite (x2, N, Tr, fpcc->awhite, dt);
 	}
 	
 	/* Calculate lags. */
@@ -512,7 +519,7 @@ void infooo() {
 	puts("Ventosa, S., Schimmel, M., & E. Stutzmann, 2019. Towards the processing of large data volumes with phase cross-correlation, Seismological Research Letters, 90(4), 1663-1669, doi:10.1785/0220190022.\n"); 
 	puts("Ventosa, S. & M. Schimmel, 2023. Broadband empirical Green’s function extraction with data adaptive phase correlations, IEEE Transactions on Geoscience and Remote Sensing, doi:10.1109/TGRS.2023.3294302.\n");
 	puts("AUTHOR: Sergi Ventosa Rahuet (sergiventosa(at)hotmail.com)");
-	puts("Last modification: 25/01/2024\n");
+	puts("Last modification: 18/12/2024\n");
 }
 
 void usage() {
@@ -582,8 +589,8 @@ void usage() {
 	puts("     Filelist2msacs filelist2.txt sta2.msacs");
 	puts("     PCC_fullpair_1b sta1.msacs sta2.msacs imsacs tl1=-1000 tl2=1000 cc1b pcc v=2");
 	puts("");
-	puts("AUTHOR: Sergi Ventosa, 25/01/2024");
-	puts("Version 1.1.0");
+	puts("AUTHOR: Sergi Ventosa, 18/12/2024");
+	puts("Version 1.1.1");
 	puts("Please, do not hesitate to send bugs, comments or improvements to sergiventosa(at)hotmail.com\n");
 }
 
@@ -904,14 +911,15 @@ int RemoveOutlierTraces (float **xOut[], t_HeaderInfo *SacHeader[], unsigned int
 		if (std[tr] > nstd * fa1) {
 			nskip++;
 			fftw_free(x[tr]); x[tr] = NULL;
-			printf("RemoveOutlierTraces: Skipping %s.%s.%s.%s, the std is %f times the average std!\n", 
-				phd[tr].net, phd[tr].sta, phd[tr].loc, phd[tr].chn, std[tr]/fa1);
-		} else if (nskip && tr+1 < Tr) {
-			memcpy (&phd[tr-nskip+1], &phd[tr+1], sizeof(t_HeaderInfo));
-			x[tr-nskip+1] = x[tr+1];
+			printf("RemoveOutlierTraces: Skipping %s.%s.%s.%s, sequence number %d, the std is %f times the average std!\n", 
+				phd[tr].net, phd[tr].sta, phd[tr].loc, phd[tr].chn, tr, std[tr]/fa1);
+		} else if (nskip && tr < Tr) {
+			memcpy (&phd[tr-nskip], &phd[tr], sizeof(t_HeaderInfo));
+			x[tr-nskip] = x[tr];
 		}
 	}
 	Tr -= nskip;
+	*Tr0 = Tr;
 	
 	return 0;
 }
@@ -1075,6 +1083,7 @@ int AveWhite (float **x0, unsigned int N, unsigned int Tr, double freq[2], doubl
 		pxX  = fftw_plan_dft_r2c_1d(Nz, x, X, FFTW_ESTIMATE); /* The FFT plan  */
 		
 		/** Average absolute spectrum **/
+		for (n=0; n<Nh; n++) H[n] = 0;
 		for (tr=0; tr<Tr; tr++) {
 			pf1 = x0[tr];
 			for (n=0; n<N;  n++) x[n] = (double)pf1[n];
@@ -1095,14 +1104,14 @@ int AveWhite (float **x0, unsigned int N, unsigned int Tr, double freq[2], doubl
 		da1 = 1./H[n2];
 		for (   ; n<Nh; n++) H[n] = da1;
 		
-		/* Max amplification of 100 times of the minimum value. */
+		/* Max amplification of 1000 times of the minimum value. */
 		mn = mx = H[n1];
 		for (n=n1+1; n<n2; n++) {
 			da1 = H[n];
 			if (da1 > mx) mx = da1;
 			else if (da1 < mn) mn = da1;
 		}
-		if (mx > 100*mn) mx = 100*mn;
+		if (mx > 1000*mn) mx = 1000*mn;
 		for (n=0; n<Nh; n++)
 			if (H[n] > mx) H[n] = mx;
 		da1 = 1/(mn * (double)Nz); /* 1/mn so min gain is 1, and 1/Nz to normalize the ifft */
@@ -1140,12 +1149,13 @@ int AveWhite (float **x0, unsigned int N, unsigned int Tr, double freq[2], doubl
 		
 		/** Do the whitening **/
 		pXx = fftw_plan_dft_c2r_1d(Nz, X, x, FFTW_ESTIMATE); /* The IFFT plan */
+		da1 = 1./(double)Nz;
 		for (tr=0; tr<Tr; tr++) {
 			pf1 = x0[tr];
 			for (n=0; n<N;  n++) x[n] = (double)pf1[n];
 			for (n=N; n<Nz; n++) x[n] = 0;
 			fftw_execute(pxX);
-			for (n=0; n<Nh; n++) X[n] *= HS[n];
+			for (n=0; n<Nh; n++) X[n] *= da1*HS[n];
 			fftw_execute(pXx);
 			for (n=0; n<N; n++) pf1[n] = (float)x[n];
 		}
